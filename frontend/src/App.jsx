@@ -13,13 +13,19 @@ function App() {
   const [lobbyEditForm, setLobbyEditForm] = useState({})
   const [newTripForm, setNewTripForm] = useState({ title: '', start_date: '', end_date: '', budget: '' })
 
-  const [activeTab, setActiveTab] = useState('itinerary') // 只有看板跟記帳
+  const [activeTab, setActiveTab] = useState('itinerary') // 加入 shopping 標籤
   const [selectedDay, setSelectedDay] = useState(1)
 
   const [items, setItems] = useState([])
   const [editingItemId, setEditingItemId] = useState(null)
   const [editItemForm, setEditItemForm] = useState({})
   const [newItemForm, setNewItemForm] = useState({ content: '', start_time: '', map_url: '', memo: '' })
+
+  // 購物清單用狀態
+  const [shoppingItems, setShoppingItems] = useState([])
+  const [newShopForm, setNewShopForm] = useState({ name: '', location: '' })
+  const [editingShopId, setEditingShopId] = useState(null)
+  const [editShopForm, setEditShopForm] = useState({})
 
   const [expenses, setExpenses] = useState([])
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', itemId: '' })
@@ -39,9 +45,15 @@ function App() {
 
   useEffect(() => { fetchTrips() }, [])
   const fetchTrips = () => fetch(`${API_BASE}/trips`).then(res => res.json()).then(setTrips)
-  const selectTrip = (trip) => { setCurrentTrip(trip); setSelectedDay(1); fetchItems(trip.id); fetchExpenses(trip.id); }
+  
+  const selectTrip = (trip) => { 
+    setCurrentTrip(trip); setSelectedDay(1); 
+    fetchItems(trip.id); fetchExpenses(trip.id); fetchShopping(trip.id);
+  }
+  
   const fetchItems = (tripId) => fetch(`${API_BASE}/items?trip_id=${tripId}`).then(res => res.json()).then(setItems)
   const fetchExpenses = (tripId) => fetch(`${API_BASE}/expenses?trip_id=${tripId}`).then(res => res.json()).then(setExpenses)
+  const fetchShopping = (tripId) => fetch(`${API_BASE}/shopping?trip_id=${tripId}`).then(res => res.json()).then(setShoppingItems)
 
   // --- 大廳行程操作 ---
   const handleCreateTrip = (e) => {
@@ -49,67 +61,49 @@ function App() {
     fetch(`${API_BASE}/trips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newTripForm) })
       .then(() => { fetchTrips(); setNewTripForm({ title: '', start_date: '', end_date: '', budget: '' }) })
   }
-
-  const startEditingLobbyTrip = (trip, e) => {
-    e.stopPropagation() // 防止觸發進入行程
-    setEditingLobbyTripId(trip.id)
-    setLobbyEditForm(trip)
-  }
-
+  const startEditingLobbyTrip = (trip, e) => { e.stopPropagation(); setEditingLobbyTripId(trip.id); setLobbyEditForm(trip) }
   const handleUpdateLobbyTrip = (e) => {
     e.preventDefault()
     fetch(`${API_BASE}/trips/${editingLobbyTripId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lobbyEditForm) })
       .then(() => { fetchTrips(); setEditingLobbyTripId(null); })
   }
-
   const handleDeleteTrip = (id, e) => {
     e.stopPropagation()
-    if (window.confirm("確定要刪除整個行程嗎？這會刪除所有景點與記帳！")) {
-      fetch(`${API_BASE}/trips/${id}`, { method: 'DELETE' }).then(() => fetchTrips())
-    }
+    if (window.confirm("確定要刪除整個行程嗎？這會刪除所有景點與記帳！")) { fetch(`${API_BASE}/trips/${id}`, { method: 'DELETE' }).then(() => fetchTrips()) }
   }
 
   // --- 景點操作 ---
   const handleAddItem = (e) => {
     e.preventDefault()
     if (!newItemForm.content) return
-    // 如果選擇 Day 0 就是願望清單
     const orderIndex = items.filter(i => i.day_number === selectedDay).length;
     fetch(`${API_BASE}/items`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trip_id: currentTrip.id, day_number: selectedDay, order_index: orderIndex, ...newItemForm })
-    }).then(() => {
-      fetchItems(currentTrip.id);
-      setNewItemForm({ content: '', start_time: '', map_url: '', memo: '' });
-    })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trip_id: currentTrip.id, day_number: selectedDay, order_index: orderIndex, ...newItemForm })
+    }).then(() => { fetchItems(currentTrip.id); setNewItemForm({ content: '', start_time: '', map_url: '', memo: '' }); })
   }
+  const saveEditedItem = () => fetch(`${API_BASE}/items/${editingItemId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editItemForm) }).then(() => { fetchItems(currentTrip.id); setEditingItemId(null) })
+  const deleteItem = (id) => { if (window.confirm("確定要刪除這個景點嗎？")) { fetch(`${API_BASE}/items/${id}`, { method: 'DELETE' }).then(() => fetchItems(currentTrip.id)) } }
 
-  const saveEditedItem = () => {
-    fetch(`${API_BASE}/items/${editingItemId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editItemForm)
-    }).then(() => { fetchItems(currentTrip.id); setEditingItemId(null) })
+  // --- 購物清單操作 ---
+  const handleAddShop = (e) => {
+    e.preventDefault()
+    if (!newShopForm.name) return
+    fetch(`${API_BASE}/shopping`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trip_id: currentTrip.id, ...newShopForm })
+    }).then(() => { fetchShopping(currentTrip.id); setNewShopForm({ name: '', location: '' }); })
   }
-
-  const deleteItem = (id) => {
-    if (window.confirm("確定要刪除這個景點嗎？")) {
-      fetch(`${API_BASE}/items/${id}`, { method: 'DELETE' }).then(() => fetchItems(currentTrip.id))
-    }
+  const toggleBoughtStatus = (item) => {
+    fetch(`${API_BASE}/shopping/${item.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_bought: !item.is_bought }) }).then(() => fetchShopping(currentTrip.id))
   }
+  const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
+  const deleteShopItem = (id) => { if (window.confirm("確定要刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE' }).then(() => fetchShopping(currentTrip.id)) } }
 
   // --- 記帳操作 ---
   const handleAddExpense = (e) => {
     e.preventDefault()
-    fetch(`${API_BASE}/expenses`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trip_id: currentTrip.id, itemId: newExpense.itemId, amount: parseFloat(newExpense.amount), category: newExpense.category, description: newExpense.description })
-    }).then(() => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', itemId: '' }) })
+    fetch(`${API_BASE}/expenses`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trip_id: currentTrip.id, itemId: newExpense.itemId, amount: parseFloat(newExpense.amount), category: newExpense.category, description: newExpense.description }) }).then(() => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', itemId: '' }) })
   }
-
-  const deleteExpense = (id) => {
-    if (window.confirm("確定要刪除這筆花費？")) {
-      fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE' }).then(() => fetchExpenses(currentTrip.id))
-    }
-  }
+  const deleteExpense = (id) => { if (window.confirm("確定要刪除這筆花費？")) { fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE' }).then(() => fetchExpenses(currentTrip.id)) } }
 
   // --- 拖曳邏輯 ---
   const onDragEnd = (result) => {
@@ -118,19 +112,12 @@ function App() {
     const sourceDay = parseInt(source.droppableId.split('-')[1]);
     const destDay = parseInt(destination.droppableId.split('-')[1]);
     let newItems = Array.from(items);
-
     const sourceItems = newItems.filter(i => i.day_number === sourceDay).sort((a, b) => a.order_index - b.order_index);
     const destItems = sourceDay === destDay ? sourceItems : newItems.filter(i => i.day_number === destDay).sort((a, b) => a.order_index - b.order_index);
-
     const [draggedItem] = sourceItems.splice(source.index, 1);
     draggedItem.day_number = destDay;
     destItems.splice(destination.index, 0, draggedItem);
-
-    const payload = sourceDay === destDay
-      ? sourceItems.map((item, index) => ({ id: item.id, order_index: index, day_number: sourceDay }))
-      : [...sourceItems.map((item, index) => ({ id: item.id, order_index: index, day_number: sourceDay })),
-      ...destItems.map((item, index) => ({ id: item.id, order_index: index, day_number: destDay }))];
-
+    const payload = sourceDay === destDay ? sourceItems.map((item, index) => ({ id: item.id, order_index: index, day_number: sourceDay })) : [...sourceItems.map((item, index) => ({ id: item.id, order_index: index, day_number: sourceDay })), ...destItems.map((item, index) => ({ id: item.id, order_index: index, day_number: destDay }))];
     newItems = newItems.map(item => { const up = payload.find(p => p.id === item.id); return up ? { ...item, ...up } : item; });
     setItems(newItems);
     fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reordered_items: payload }) });
@@ -193,7 +180,7 @@ function App() {
     )
   }
 
-  // ================= 渲染：行程儀表板 =================
+  // ================= 渲染：行程儀表板 (Droppable/Draggable) =================
   const renderDayColumn = (day, title = null) => {
     const dayItems = items.filter(item => item.day_number === day).sort((a, b) => a.order_index - b.order_index);
     const isWishlist = day === 0;
@@ -267,15 +254,18 @@ function App() {
     );
   }
 
+  // ================= 主結構回傳 =================
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif' }}>
-
+      
+      {/* --- 頂部導覽列 --- */}
       <div style={{ backgroundColor: '#ffffff', padding: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10 }}>
         <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
           <button onClick={() => setCurrentTrip(null)} style={{ padding: '8px 16px', cursor: 'pointer', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', color: '#4a5568', fontWeight: 'bold' }}>🔙 大廳</button>
           <h1 style={{ margin: 0, color: '#1a365d', fontSize: '1.3em', textAlign: 'center', flex: '1 1 200px' }}>{currentTrip.title}</h1>
           <div style={{ display: 'flex', gap: '5px' }}>
-            <button onClick={() => setActiveTab('itinerary')} style={{ padding: '6px 12px', backgroundColor: activeTab === 'itinerary' ? '#e6fffa' : 'transparent', color: activeTab === 'itinerary' ? '#319795' : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 'bold' }}>📍 行程看板</button>
+            <button onClick={() => setActiveTab('itinerary')} style={{ padding: '6px 12px', backgroundColor: activeTab === 'itinerary' ? '#e6fffa' : 'transparent', color: activeTab === 'itinerary' ? '#319795' : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 'bold' }}>📍 看板</button>
+            <button onClick={() => setActiveTab('shopping')} style={{ padding: '6px 12px', backgroundColor: activeTab === 'shopping' ? '#ebf8ff' : 'transparent', color: activeTab === 'shopping' ? '#2b6cb0' : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 'bold' }}>🛒 購物</button>
             <button onClick={() => setActiveTab('expenses')} style={{ padding: '6px 12px', backgroundColor: activeTab === 'expenses' ? '#fff5f5' : 'transparent', color: activeTab === 'expenses' ? '#e53e3e' : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 'bold' }}>💰 記帳</button>
           </div>
         </div>
@@ -283,6 +273,7 @@ function App() {
 
       <div style={{ padding: '20px 15px', maxWidth: '800px', margin: '0 auto' }}>
 
+        {/* --- 📍 行程看板分頁 --- */}
         {activeTab === 'itinerary' && (
           <>
             <form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px', backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
@@ -309,6 +300,49 @@ function App() {
           </>
         )}
 
+        {/* --- 🛒 購物清單分頁 --- */}
+        {activeTab === 'shopping' && (
+          <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
+            <h2 style={{ color: '#2c7a7b', marginTop: 0 }}>🛒 購物清單</h2>
+            <form onSubmit={handleAddShop} style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '25px' }}>
+              <input type="text" placeholder="想買什麼？ (如: 防曬乳)" value={newShopForm.name} onChange={e => setNewShopForm({...newShopForm, name: e.target.value})} required style={{ flex: '2 1 150px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} />
+              <input type="text" placeholder="哪裡買？備註 (如: 機場免稅店)" value={newShopForm.location} onChange={e => setNewShopForm({...newShopForm, location: e.target.value})} style={{ flex: '2 1 150px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} />
+              <button type="submit" style={{ padding: '12px 24px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', flex: '1 1 100px' }}>＋ 新增</button>
+            </form>
+
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {shoppingItems.map(item => (
+                <li key={item.id} style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '15px', marginBottom: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', transition: 'opacity 0.2s', opacity: item.is_bought ? 0.6 : 1 }}>
+                  {editingShopId === item.id ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                      <input type="text" value={editShopForm.name} onChange={e => setEditShopForm({...editShopForm, name: e.target.value})} required style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
+                      <input type="text" value={editShopForm.location} onChange={e => setEditShopForm({...editShopForm, location: e.target.value})} placeholder="哪裡買？" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
+                      <button onClick={() => setEditingShopId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer' }}>取消</button>
+                      <button onClick={saveEditedShop} style={{ padding: '6px 12px', border: 'none', background: '#319795', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>儲存</button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flex: 1 }}>
+                        <input type="checkbox" checked={item.is_bought} onChange={() => toggleBoughtStatus(item)} style={{ width: '22px', height: '22px', cursor: 'pointer', accentColor: '#38b2ac' }} />
+                        <div style={{ textDecoration: item.is_bought ? 'line-through' : 'none' }}>
+                          <strong style={{ color: '#2d3748', fontSize: '1.1em', display: 'block' }}>{item.name}</strong>
+                          {item.location && <span style={{ color: '#718096', fontSize: '0.85em' }}>📍 {item.location}</span>}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <button onClick={() => { setEditingShopId(item.id); setEditShopForm(item); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1em' }} title="編輯">✏️</button>
+                        <button onClick={() => deleteShopItem(item.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', fontSize: '1.1em' }} title="刪除">🗑️</button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              ))}
+              {shoppingItems.length === 0 && <div style={{ textAlign: 'center', color: '#a0aec0', padding: '20px 0' }}>購物清單空空的，沒有想買的東西嗎？</div>}
+            </ul>
+          </div>
+        )}
+
+        {/* --- 💰 旅遊記帳分頁 --- */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '25px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
