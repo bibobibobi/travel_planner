@@ -45,12 +45,12 @@ function App() {
 
   useEffect(() => { fetchTrips() }, [])
   const fetchTrips = () => fetch(`${API_BASE}/trips`).then(res => res.json()).then(setTrips)
-  
-  const selectTrip = (trip) => { 
-    setCurrentTrip(trip); setSelectedDay(1); 
+
+  const selectTrip = (trip) => {
+    setCurrentTrip(trip); setSelectedDay(1);
     fetchItems(trip.id); fetchExpenses(trip.id); fetchShopping(trip.id);
   }
-  
+
   const fetchItems = (tripId) => fetch(`${API_BASE}/items?trip_id=${tripId}`).then(res => res.json()).then(setItems)
   const fetchExpenses = (tripId) => fetch(`${API_BASE}/expenses?trip_id=${tripId}`).then(res => res.json()).then(setExpenses)
   const fetchShopping = (tripId) => fetch(`${API_BASE}/shopping?trip_id=${tripId}`).then(res => res.json()).then(setShoppingItems)
@@ -86,11 +86,40 @@ function App() {
 
   // --- 購物清單操作 ---
   const handleAddShop = (e) => {
-    e.preventDefault()
-    if (!newShopForm.name) return
+    e.preventDefault();
+    if (!newShopForm.name) {
+      alert("請輸入要購買的物品名稱！");
+      return;
+    }
+
+    const payload = {
+      trip_id: currentTrip.id,
+      name: newShopForm.name,
+      location: newShopForm.location || ''
+    };
+
+    console.log("準備送出的購物資料：", payload); // 幫你在 F12 開發者工具留下線索
+
     fetch(`${API_BASE}/shopping`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trip_id: currentTrip.id, ...newShopForm })
-    }).then(() => { fetchShopping(currentTrip.id); setNewShopForm({ name: '', location: '' }); })
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`伺服器回應錯誤: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then(data => {
+        console.log("新增成功，伺服器回傳：", data);
+        fetchShopping(currentTrip.id);
+        setNewShopForm({ name: '', location: '' });
+      })
+      .catch(err => {
+        console.error("新增購物清單失敗：", err);
+        alert("新增失敗，請檢查網路或系統狀態。");
+      });
   }
   const toggleBoughtStatus = (item) => {
     fetch(`${API_BASE}/shopping/${item.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_bought: !item.is_bought }) }).then(() => fetchShopping(currentTrip.id))
@@ -257,7 +286,7 @@ function App() {
   // ================= 主結構回傳 =================
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif' }}>
-      
+
       {/* --- 頂部導覽列 --- */}
       <div style={{ backgroundColor: '#ffffff', padding: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10 }}>
         <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
@@ -305,8 +334,8 @@ function App() {
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
             <h2 style={{ color: '#2c7a7b', marginTop: 0 }}>🛒 購物清單</h2>
             <form onSubmit={handleAddShop} style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '25px' }}>
-              <input type="text" placeholder="想買什麼？ (如: 防曬乳)" value={newShopForm.name} onChange={e => setNewShopForm({...newShopForm, name: e.target.value})} required style={{ flex: '2 1 150px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} />
-              <input type="text" placeholder="哪裡買？備註 (如: 機場免稅店)" value={newShopForm.location} onChange={e => setNewShopForm({...newShopForm, location: e.target.value})} style={{ flex: '2 1 150px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} />
+              <input type="text" placeholder="想買什麼？ (如: 防曬乳)" value={newShopForm.name} onChange={e => setNewShopForm({ ...newShopForm, name: e.target.value })} required style={{ flex: '2 1 150px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} />
+              <input type="text" placeholder="哪裡買？備註 (如: 機場免稅店)" value={newShopForm.location} onChange={e => setNewShopForm({ ...newShopForm, location: e.target.value })} style={{ flex: '2 1 150px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} />
               <button type="submit" style={{ padding: '12px 24px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', flex: '1 1 100px' }}>＋ 新增</button>
             </form>
 
@@ -315,8 +344,8 @@ function App() {
                 <li key={item.id} style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '15px', marginBottom: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', transition: 'opacity 0.2s', opacity: item.is_bought ? 0.6 : 1 }}>
                   {editingShopId === item.id ? (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                      <input type="text" value={editShopForm.name} onChange={e => setEditShopForm({...editShopForm, name: e.target.value})} required style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
-                      <input type="text" value={editShopForm.location} onChange={e => setEditShopForm({...editShopForm, location: e.target.value})} placeholder="哪裡買？" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
+                      <input type="text" value={editShopForm.name} onChange={e => setEditShopForm({ ...editShopForm, name: e.target.value })} required style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
+                      <input type="text" value={editShopForm.location} onChange={e => setEditShopForm({ ...editShopForm, location: e.target.value })} placeholder="哪裡買？" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
                       <button onClick={() => setEditingShopId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer' }}>取消</button>
                       <button onClick={saveEditedShop} style={{ padding: '6px 12px', border: 'none', background: '#319795', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>儲存</button>
                     </div>

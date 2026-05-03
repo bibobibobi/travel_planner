@@ -17,6 +17,11 @@ class Trip(db.Model):
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
     budget = db.Column(db.Integer, nullable=True)
+    
+    # 關聯設定：當行程刪除時，底下的景點、記帳、購物清單都會跟著刪除
+    items = db.relationship('ItineraryItem', backref='trip', lazy=True, cascade="all, delete-orphan")
+    expenses = db.relationship('Expense', backref='trip', lazy=True, cascade="all, delete-orphan")
+    shoppings = db.relationship('ShoppingItem', backref='trip', lazy=True, cascade="all, delete-orphan")
 
 class ItineraryItem(db.Model):
     __tablename__ = 'item' 
@@ -39,43 +44,42 @@ class Expense(db.Model):
     category = db.Column(db.String(50), nullable=False)
     description = db.Column(db.String(200), nullable=True)
 
+# ====== 新增：購物清單模型 ======
+class ShoppingItem(db.Model):
+    __tablename__ = 'shopping_item'
+    id = db.Column(db.Integer, primary_key=True)
+    trip_id = db.Column(db.Integer, db.ForeignKey('trip.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    location = db.Column(db.String(100), nullable=True) # 哪裡買
+    is_bought = db.Column(db.Boolean, default=False)
+
 with app.app_context():
+    # 因為新增了 ShoppingItem，重啟時會自動幫你在資料庫建這張表
     db.create_all()
 
 @app.route('/')
 def index():
     return jsonify({"message": "API 伺服器運作中！"})
 
+# --- 行程 API ---
 @app.route('/api/trips', methods=['GET', 'POST'])
 def handle_trips():
     if request.method == 'POST':
         data = request.get_json()
         budget_val = data.get('budget')
         budget_val = int(budget_val) if budget_val not in ["", None] else 0
-
-        new_trip = Trip(
-            title=data.get('title'),
-            start_date=datetime.strptime(data.get('start_date'), "%Y-%m-%d").date(),
-            end_date=datetime.strptime(data.get('end_date'), "%Y-%m-%d").date(),
-            budget=budget_val
-        )
+        new_trip = Trip(title=data.get('title'), start_date=datetime.strptime(data.get('start_date'), "%Y-%m-%d").date(), end_date=datetime.strptime(data.get('end_date'), "%Y-%m-%d").date(), budget=budget_val)
         db.session.add(new_trip)
         db.session.commit()
         return jsonify({"status": "success", "id": new_trip.id, "title": new_trip.title}), 201
 
     trips = Trip.query.all()
-    return jsonify([{
-        "id": t.id, "title": t.title, "start_date": t.start_date.strftime("%Y-%m-%d"),
-        "end_date": t.end_date.strftime("%Y-%m-%d"), "budget": t.budget
-    } for t in trips])
+    return jsonify([{"id": t.id, "title": t.title, "start_date": t.start_date.strftime("%Y-%m-%d"), "end_date": t.end_date.strftime("%Y-%m-%d"), "budget": t.budget} for t in trips])
 
 @app.route('/api/trips/<int:trip_id>', methods=['PUT', 'DELETE'])
 def modify_trip(trip_id):
     trip = Trip.query.get_or_404(trip_id)
     if request.method == 'DELETE':
-        # 連帶刪除該行程的所有景點與記帳 (Cascade 處理)
-        Expense.query.filter_by(trip_id=trip_id).delete()
-        ItineraryItem.query.filter_by(trip_id=trip_id).delete()
         db.session.delete(trip)
         db.session.commit()
         return jsonify({"status": "deleted"})
@@ -88,31 +92,24 @@ def modify_trip(trip_id):
     db.session.commit()
     return jsonify({"status": "success"})
 
+# --- 景點 API ---
 @app.route('/api/items', methods=['GET', 'POST'])
 def handle_items():
     if request.method == 'POST':
         data = request.get_json()
-        new_item = ItineraryItem(
-            trip_id=data.get('trip_id'), day_number=data.get('day_number', 1),
-            order_index=data.get('order_index', 0), place_name=data.get('content'),
-            start_time=data.get('start_time'), memo=data.get('memo'), map_url=data.get('map_url')
-        )
+        new_item = ItineraryItem(trip_id=data.get('trip_id'), day_number=data.get('day_number', 1), order_index=data.get('order_index', 0), place_name=data.get('content'), start_time=data.get('start_time'), memo=data.get('memo'), map_url=data.get('map_url'))
         db.session.add(new_item)
         db.session.commit()
         return jsonify({"status": "success", "id": str(new_item.id)}), 201
 
     trip_id = request.args.get('trip_id')
     items = ItineraryItem.query.filter_by(trip_id=trip_id).order_by(ItineraryItem.order_index).all()
-    return jsonify([{
-        "id": str(item.id), "content": item.place_name, "order_index": item.order_index, 
-        "day_number": item.day_number, "start_time": item.start_time, "memo": item.memo, "map_url": item.map_url
-    } for item in items])
+    return jsonify([{"id": str(item.id), "content": item.place_name, "order_index": item.order_index, "day_number": item.day_number, "start_time": item.start_time, "memo": item.memo, "map_url": item.map_url} for item in items])
 
 @app.route('/api/items/<int:item_id>', methods=['PUT', 'DELETE'])
 def modify_item(item_id):
     item = ItineraryItem.query.get_or_404(item_id)
     if request.method == 'DELETE':
-        # 解除綁定：把有綁定這個景點的記帳，設為沒有綁定 (None) 以免報錯
         Expense.query.filter_by(item_id=item_id).update({'item_id': None})
         db.session.delete(item)
         db.session.commit()
@@ -138,6 +135,7 @@ def reorder_items():
     db.session.commit()
     return jsonify({"status": "success"})
 
+# --- 記帳 API ---
 @app.route('/api/expenses', methods=['GET', 'POST'])
 def handle_expenses():
     if request.method == 'POST':
@@ -151,13 +149,41 @@ def handle_expenses():
     expenses = Expense.query.filter_by(trip_id=trip_id).all()
     return jsonify([{"id": str(exp.id), "amount": exp.amount, "category": exp.category, "description": exp.description, "itemId": str(exp.item_id) if exp.item_id else ""} for exp in expenses])
 
-# 新增：刪除單筆記帳
 @app.route('/api/expenses/<int:exp_id>', methods=['DELETE'])
 def delete_expense(exp_id):
     exp = Expense.query.get_or_404(exp_id)
     db.session.delete(exp)
     db.session.commit()
     return jsonify({"status": "deleted"})
+
+# ====== 新增：購物清單 API ======
+@app.route('/api/shopping', methods=['GET', 'POST'])
+def handle_shopping():
+    if request.method == 'POST':
+        data = request.get_json()
+        new_shop = ShoppingItem(trip_id=data.get('trip_id'), name=data.get('name'), location=data.get('location', ''), is_bought=False)
+        db.session.add(new_shop)
+        db.session.commit()
+        return jsonify({"status": "success", "id": new_shop.id}), 201
+
+    trip_id = request.args.get('trip_id')
+    items = ShoppingItem.query.filter_by(trip_id=trip_id).order_by(ShoppingItem.id).all()
+    return jsonify([{"id": str(i.id), "name": i.name, "location": i.location, "is_bought": i.is_bought} for i in items])
+
+@app.route('/api/shopping/<int:item_id>', methods=['PUT', 'DELETE'])
+def modify_shopping(item_id):
+    item = ShoppingItem.query.get_or_404(item_id)
+    if request.method == 'DELETE':
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({"status": "deleted"})
+        
+    data = request.get_json()
+    if 'name' in data: item.name = data['name']
+    if 'location' in data: item.location = data['location']
+    if 'is_bought' in data: item.is_bought = data['is_bought']
+    db.session.commit()
+    return jsonify({"status": "success"})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
