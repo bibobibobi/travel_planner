@@ -2,10 +2,9 @@ import { useState, useEffect } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import './App.css'
 
-const API_BASE = '/api' 
+const API_BASE = '/api'
 
 function App() {
-  // ================= 狀態管理 (移除預設標題與日期) =================
   const [trips, setTrips] = useState([])
   const [currentTrip, setCurrentTrip] = useState(null)
   const [newTripForm, setNewTripForm] = useState({
@@ -17,10 +16,10 @@ function App() {
 
   const [items, setItems] = useState([])
   const [newItemContent, setNewItemContent] = useState('')
+  const [newItemMapUrl, setNewItemMapUrl] = useState('') // 新增：地圖連結狀態
   const [expenses, setExpenses] = useState([])
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', itemId: '' })
 
-  // ================= 輔助函數 =================
   const getTripDays = (start, end) => {
     const d1 = new Date(start)
     const d2 = new Date(end)
@@ -38,7 +37,6 @@ function App() {
     return `${date.getMonth() + 1}/${date.getDate()}`;
   }
 
-  // ================= API 呼叫區 =================
   useEffect(() => { fetchTrips() }, [])
   const fetchTrips = () => { fetch(`${API_BASE}/trips`).then(res => res.json()).then(setTrips) }
   const selectTrip = (trip) => { setCurrentTrip(trip); setSelectedDay(1); fetchItems(trip.id); fetchExpenses(trip.id); }
@@ -58,8 +56,12 @@ function App() {
 
     fetch(`${API_BASE}/items`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trip_id: currentTrip.id, day_number: selectedDay, content: newItemContent, order_index: dayItemsCount })
-    }).then(() => { fetchItems(currentTrip.id); setNewItemContent('') })
+      body: JSON.stringify({ trip_id: currentTrip.id, day_number: selectedDay, content: newItemContent, map_url: newItemMapUrl, order_index: dayItemsCount })
+    }).then(() => {
+      fetchItems(currentTrip.id);
+      setNewItemContent('');
+      setNewItemMapUrl(''); // 清空地圖連結
+    })
   }
 
   const handleAddExpense = (e) => {
@@ -73,7 +75,7 @@ function App() {
 
   const onDragEnd = (result) => {
     const { source, destination } = result;
-    if (!destination) return; 
+    if (!destination) return;
 
     const sourceDay = parseInt(source.droppableId.split('-')[1]);
     const destDay = parseInt(destination.droppableId.split('-')[1]);
@@ -120,13 +122,12 @@ function App() {
 
   const totalExpense = expenses.reduce((sum, exp) => sum + exp.amount, 0)
 
-  // ================= 畫面渲染區：大廳 =================
   if (!currentTrip) {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif' }}>
         <div style={{ width: '100%', maxWidth: '600px', backgroundColor: '#ffffff', padding: '30px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
           <h1 style={{ textAlign: 'center', color: '#1a365d', marginBottom: '30px', fontSize: '1.8em' }}>✈️ 我的旅遊管理大廳</h1>
-          
+
           <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '12px', marginBottom: '30px', border: '1px solid #e2e8f0' }}>
             <h3 style={{ marginTop: 0, color: '#2b6cb0' }}>➕ 建立新行程</h3>
             <form onSubmit={handleCreateTrip} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -156,16 +157,13 @@ function App() {
     )
   }
 
-  // ================= 畫面渲染區：行程儀表板 (垂直排列響應式版) =================
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif' }}>
-      
-      {/* 頂部導覽列：響應式自動換行 */}
       <div style={{ backgroundColor: '#ffffff', padding: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10 }}>
         <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
           <button onClick={() => setCurrentTrip(null)} style={{ padding: '8px 16px', cursor: 'pointer', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', color: '#4a5568', fontWeight: 'bold', flexShrink: 0 }}>🔙 回大廳</button>
           <h1 style={{ margin: 0, color: '#1a365d', fontSize: '1.3em', textAlign: 'center', flex: '1 1 200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentTrip.title}</h1>
-          
+
           <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
             <button onClick={() => setActiveTab('itinerary')} style={{ padding: '8px 16px', backgroundColor: activeTab === 'itinerary' ? '#e6fffa' : 'transparent', color: activeTab === 'itinerary' ? '#319795' : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 'bold' }}>📍 行程看板</button>
             <button onClick={() => setActiveTab('expenses')} style={{ padding: '8px 16px', backgroundColor: activeTab === 'expenses' ? '#fff5f5' : 'transparent', color: activeTab === 'expenses' ? '#e53e3e' : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 'bold' }}>💰 記帳本</button>
@@ -174,7 +172,6 @@ function App() {
       </div>
 
       <div style={{ padding: '20px 15px', maxWidth: '800px', margin: '0 auto' }}>
-        {/* ================= 垂直看板模式 UI ================= */}
         {activeTab === 'itinerary' && (
           <>
             <form onSubmit={handleAddItem} style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '30px', backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
@@ -183,11 +180,12 @@ function App() {
                   <option key={day} value={day}>加至 第 {day} 天</option>
                 ))}
               </select>
-              <input type="text" placeholder="想去的景點..." value={newItemContent} onChange={e => setNewItemContent(e.target.value)} required style={{ flex: '3 1 200px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '1em' }} />
+              <input type="text" placeholder="想去的景點..." value={newItemContent} onChange={e => setNewItemContent(e.target.value)} required style={{ flex: '2 1 150px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '1em' }} />
+              {/* 新增的地圖連結輸入框 */}
+              <input type="url" placeholder="Google Map 連結 (選填)" value={newItemMapUrl} onChange={e => setNewItemMapUrl(e.target.value)} style={{ flex: '2 1 150px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '1em' }} />
               <button type="submit" style={{ padding: '12px 24px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 6px rgba(56, 178, 172, 0.2)', flex: '1 1 100px' }}>＋ 加入</button>
             </form>
 
-            {/* 垂直排列的 Kanban 區域 */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '25px', paddingBottom: '30px' }}>
               <DragDropContext onDragEnd={onDragEnd}>
                 {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => {
@@ -195,7 +193,6 @@ function App() {
 
                   return (
                     <div key={`day-container-${day}`} style={{ width: '100%', backgroundColor: '#e2e8f0', borderRadius: '16px', padding: '15px', boxSizing: 'border-box' }}>
-                      
                       <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px', padding: '0 5px' }}>
                         <span style={{ backgroundColor: '#ffffff', color: '#3182ce', padding: '6px 12px', borderRadius: '8px', fontSize: '14px', fontWeight: 'bold', marginRight: '10px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>Day {day}</span>
                         <span style={{ fontSize: '15px', color: '#4a5568', fontWeight: '600' }}>{getDisplayDate(currentTrip.start_date, day)}</span>
@@ -203,10 +200,7 @@ function App() {
 
                       <Droppable droppableId={`day-${day}`}>
                         {(provided, snapshot) => (
-                          <div
-                            {...provided.droppableProps} ref={provided.innerRef}
-                            style={{ minHeight: '80px', borderRadius: '12px', transition: 'background-color 0.2s', backgroundColor: snapshot.isDraggingOver ? '#cbd5e0' : 'transparent' }}
-                          >
+                          <div {...provided.droppableProps} ref={provided.innerRef} style={{ minHeight: '80px', borderRadius: '12px', transition: 'background-color 0.2s', backgroundColor: snapshot.isDraggingOver ? '#cbd5e0' : 'transparent' }}>
                             {dayItems.length === 0 && (
                               <div style={{ textAlign: 'center', color: '#a0aec0', padding: '20px 0', border: '2px dashed #cbd5e0', borderRadius: '12px', fontSize: '14px', margin: '5px 0' }}>
                                 放鬆的一天，還沒排行程喔！
@@ -216,10 +210,21 @@ function App() {
                             {dayItems.map((item, index) => (
                               <Draggable key={item.id} draggableId={item.id} index={index}>
                                 {(provided, snapshot) => (
-                                  <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} 
-                                       style={{ userSelect: 'none', padding: '16px', margin: '0 0 10px 0', backgroundColor: '#ffffff', color: '#2d3748', borderRadius: '10px', boxShadow: snapshot.isDragging ? '0 10px 25px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', ...provided.draggableProps.style }}>
-                                    <span style={{ marginRight: '12px', color: '#a0aec0', fontSize: '18px' }}>⋮⋮</span>
-                                    <strong style={{ fontSize: '15px', lineHeight: '1.4', wordBreak: 'break-word' }}>{item.content}</strong>
+                                  <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}
+                                    style={{ userSelect: 'none', padding: '16px', margin: '0 0 10px 0', backgroundColor: '#ffffff', color: '#2d3748', borderRadius: '10px', boxShadow: snapshot.isDragging ? '0 10px 25px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...provided.draggableProps.style }}>
+
+                                    {/* 左側：拖曳點與文字 */}
+                                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                                      <span style={{ marginRight: '12px', color: '#a0aec0', fontSize: '18px' }}>⋮⋮</span>
+                                      <strong style={{ fontSize: '15px', lineHeight: '1.4', wordBreak: 'break-word' }}>{item.content}</strong>
+                                    </div>
+
+                                    {/* 右側：地圖導航按鈕 (如果有網址才顯示) */}
+                                    {item.map_url && (
+                                      <a href={item.map_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '1.2em', marginLeft: '10px', padding: '5px', borderRadius: '50%', transition: 'background-color 0.2s' }} title="開啟 Google Map 導航">
+                                        📍
+                                      </a>
+                                    )}
                                   </div>
                                 )}
                               </Draggable>
@@ -236,7 +241,6 @@ function App() {
           </>
         )}
 
-        {/* ================= 記帳本區塊 (響應式更新) ================= */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '25px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
@@ -265,7 +269,7 @@ function App() {
                 return (
                   <li key={exp.id} style={{ backgroundColor: '#f8fafc', padding: '15px', marginBottom: '10px', borderRadius: '12px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0', gap: '10px' }}>
                     <div>
-                      <strong style={{ color: '#2d3748', fontSize: '1.1em', marginRight: '10px' }}>{exp.category}</strong> 
+                      <strong style={{ color: '#2d3748', fontSize: '1.1em', marginRight: '10px' }}>{exp.category}</strong>
                       <span style={{ color: '#4a5568' }}>{exp.description || '無明細'}</span>
                       {relatedItem && <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '5px' }}>📍 Day {relatedItem.day_number} - {relatedItem.content}</div>}
                     </div>
