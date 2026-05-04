@@ -221,12 +221,24 @@ def handle_expenses():
     expenses = Expense.query.filter_by(trip_id=trip_id).all()
     return jsonify([{"id": str(exp.id), "amount": exp.amount, "category": exp.category, "description": exp.description, "itemId": str(exp.item_id) if exp.item_id else "", "image_url": exp.image_url} for exp in expenses])
 
-@app.route('/api/expenses/<int:exp_id>', methods=['DELETE'])
-def delete_expense(exp_id):
+# --- 記帳 API (支援 刪除 與 編輯更新) ---
+@app.route('/api/expenses/<int:exp_id>', methods=['PUT', 'DELETE'])
+def handle_single_expense(exp_id):
     exp = Expense.query.get_or_404(exp_id)
-    db.session.delete(exp)
+    if request.method == 'DELETE':
+        db.session.delete(exp)
+        db.session.commit()
+        return jsonify({"status": "deleted"})
+    
+    # 💡 這裡是補上的編輯邏輯
+    data = request.get_json()
+    if 'amount' in data: exp.amount = float(data['amount'])
+    if 'category' in data: exp.category = data['category']
+    if 'description' in data: exp.description = data['description']
+    if 'itemId' in data: exp.item_id = int(data['itemId']) if data['itemId'] else None
+    
     db.session.commit()
-    return jsonify({"status": "deleted"})
+    return jsonify({"status": "success"})
 
 @app.route('/api/shopping', methods=['GET', 'POST'])
 def handle_shopping():
