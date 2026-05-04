@@ -9,7 +9,6 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://travel_user:travel123@localhost/travel_db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# 設定上傳圖片的儲存資料夾
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -39,7 +38,7 @@ class ItineraryItem(db.Model):
     start_time = db.Column(db.String(10), nullable=True)
     memo = db.Column(db.Text, nullable=True)
     map_url = db.Column(db.Text, nullable=True)
-    category = db.Column(db.String(50), default='景點') # 新增：景點類別
+    category = db.Column(db.String(50), default='景點')
 
 class Expense(db.Model):
     __tablename__ = 'expense'
@@ -50,7 +49,7 @@ class Expense(db.Model):
     currency = db.Column(db.String(10), default='JPY')
     category = db.Column(db.String(50), nullable=False)
     description = db.Column(db.String(200), nullable=True)
-    image_url = db.Column(db.String(200), nullable=True) # 新增：收據圖片網址
+    image_url = db.Column(db.String(200), nullable=True)
 
 class ShoppingItem(db.Model):
     __tablename__ = 'shopping_item'
@@ -59,6 +58,7 @@ class ShoppingItem(db.Model):
     name = db.Column(db.String(100), nullable=False)
     location = db.Column(db.String(100), nullable=True)
     is_bought = db.Column(db.Boolean, default=False)
+    image_url = db.Column(db.String(200), nullable=True) # 新增欄位
 
 with app.app_context():
     db.create_all()
@@ -67,7 +67,6 @@ with app.app_context():
 def index():
     return jsonify({"message": "API 伺服器運作中！"})
 
-# 負責提供圖片檔案的路由
 @app.route('/api/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
@@ -144,7 +143,6 @@ def reorder_items():
 @app.route('/api/expenses', methods=['GET', 'POST'])
 def handle_expenses():
     if request.method == 'POST':
-        # 因為有圖片上傳，前端改用 FormData (request.form / request.files) 傳送資料
         trip_id = request.form.get('trip_id')
         item_id = request.form.get('itemId')
         item_id = int(item_id) if item_id else None
@@ -152,13 +150,11 @@ def handle_expenses():
         category = request.form.get('category')
         description = request.form.get('description')
 
-        # 處理圖片上傳
         image_url = None
         if 'receipt_image' in request.files:
             file = request.files['receipt_image']
             if file.filename != '':
-                # 幫檔案加上時間戳避免檔名重複
-                filename = secure_filename(f"{int(datetime.now().timestamp())}_{file.filename}")
+                filename = secure_filename(f"exp_{int(datetime.now().timestamp())}_{file.filename}")
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
 
@@ -178,19 +174,30 @@ def delete_expense(exp_id):
     db.session.commit()
     return jsonify({"status": "deleted"})
 
-# --- 購物清單 API ---
+# --- 購物清單 API (升級支援圖片上傳) ---
 @app.route('/api/shopping', methods=['GET', 'POST'])
 def handle_shopping():
     if request.method == 'POST':
-        data = request.get_json()
-        new_shop = ShoppingItem(trip_id=data.get('trip_id'), name=data.get('name'), location=data.get('location', ''), is_bought=False)
+        trip_id = request.form.get('trip_id')
+        name = request.form.get('name')
+        location = request.form.get('location', '')
+        
+        image_url = None
+        if 'item_image' in request.files:
+            file = request.files['item_image']
+            if file.filename != '':
+                filename = secure_filename(f"shop_{int(datetime.now().timestamp())}_{file.filename}")
+                file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+                image_url = f"/api/uploads/{filename}"
+
+        new_shop = ShoppingItem(trip_id=trip_id, name=name, location=location, is_bought=False, image_url=image_url)
         db.session.add(new_shop)
         db.session.commit()
         return jsonify({"status": "success", "id": new_shop.id}), 201
 
     trip_id = request.args.get('trip_id')
     items = ShoppingItem.query.filter_by(trip_id=trip_id).order_by(ShoppingItem.id).all()
-    return jsonify([{"id": str(i.id), "name": i.name, "location": i.location, "is_bought": i.is_bought} for i in items])
+    return jsonify([{"id": str(i.id), "name": i.name, "location": i.location, "is_bought": i.is_bought, "image_url": i.image_url} for i in items])
 
 @app.route('/api/shopping/<int:item_id>', methods=['PUT', 'DELETE'])
 def modify_shopping(item_id):
@@ -198,10 +205,11 @@ def modify_shopping(item_id):
     if request.method == 'DELETE':
         db.session.delete(item)
     else:
+        # 處理打勾狀態
         data = request.get_json()
+        if 'is_bought' in data: item.is_bought = data['is_bought']
         if 'name' in data: item.name = data['name']
         if 'location' in data: item.location = data['location']
-        if 'is_bought' in data: item.is_bought = data['is_bought']
     db.session.commit()
     return jsonify({"status": "success"})
 
