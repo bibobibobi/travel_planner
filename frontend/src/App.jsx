@@ -13,25 +13,31 @@ const ITEM_CATEGORIES = [
   { name: '其他', icon: '❓', color: '#718096', bg: '#f7fafc' }
 ];
 
+// 💡 新增：記帳專用的分類與圖示對應
+const EXPENSE_CATEGORIES = [
+  { name: '飲食', icon: '🍔' },
+  { name: '交通', icon: '🚗' },
+  { name: '購物', icon: '🛍️' },
+  { name: '住宿', icon: '🛏️' },
+  { name: '其他', icon: '❓' }
+];
+
 function App() {
   const [trips, setTrips] = useState([])
   const [currentTrip, setCurrentTrip] = useState(null)
   const [editingLobbyTripId, setEditingLobbyTripId] = useState(null)
   const [lobbyEditForm, setLobbyEditForm] = useState({})
   const [newTripForm, setNewTripForm] = useState({ title: '', start_date: '', end_date: '', budget: '' })
-
   const [activeTab, setActiveTab] = useState('itinerary')
   const [selectedDay, setSelectedDay] = useState(1)
   const [items, setItems] = useState([])
   const [editingItemId, setEditingItemId] = useState(null)
   const [editItemForm, setEditItemForm] = useState({})
   const [newItemForm, setNewItemForm] = useState({ content: '', start_time: '', map_url: '', memo: '', category: '景點' })
-
   const [shoppingItems, setShoppingItems] = useState([])
   const [newShopForm, setNewShopForm] = useState({ name: '', location: '', item_image: null })
   const [editingShopId, setEditingShopId] = useState(null)
   const [editShopForm, setEditShopForm] = useState({})
-
   const [expenses, setExpenses] = useState([])
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null })
 
@@ -117,7 +123,15 @@ function App() {
     fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reordered_items: payload }) });
   }
 
+  // --- 💡 總花費與各分類花費計算 ---
   const totalExpense = Array.isArray(expenses) ? expenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0) : 0;
+
+  // 計算各類別總和
+  const categoryTotals = Array.isArray(expenses) ? expenses.reduce((acc, exp) => {
+    const cat = exp.category || '其他';
+    acc[cat] = (acc[cat] || 0) + (Number(exp.amount) || 0);
+    return acc;
+  }, {}) : {};
 
   const getTabStyle = (tabName) => ({
     padding: '8px 14px',
@@ -308,7 +322,6 @@ function App() {
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
-                        {/* 💡 修復：加回購物清單的編輯與縮小圖示 */}
                         <button onClick={() => { setEditingShopId(item.id); setEditShopForm(item); }} style={{ background: 'none', border: 'none', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>✏️</button>
                         <button onClick={() => deleteShopItem(item.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>🗑️</button>
                       </div>
@@ -321,25 +334,39 @@ function App() {
           </div>
         )}
 
-        {/* --- 記帳分頁 (完美防擠壓修復) --- */}
+        {/* --- 記帳分頁 (加入分類加總) --- */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
-            <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+
+            <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0, color: '#c53030', fontWeight: 600 }}>目前總花費</h2>
               <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e' }}>{totalExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>JPY</span></span>
             </div>
 
+            {/* 💡 新增：分類各別加總呈現區塊 (可橫向滾動) */}
+            {Object.keys(categoryTotals).length > 0 && (
+              <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '25px', WebkitOverflowScrolling: 'touch' }}>
+                {EXPENSE_CATEGORIES.map(cat => {
+                  if (!categoryTotals[cat.name]) return null;
+                  return (
+                    <div key={cat.name} style={{ flex: '0 0 auto', backgroundColor: '#f8fafc', padding: '12px 15px', borderRadius: '10px', border: '1px solid #e2e8f0', minWidth: '100px', boxSizing: 'border-box' }}>
+                      <div style={{ fontSize: '0.9em', color: '#718096', marginBottom: '4px', fontWeight: 600 }}>{cat.icon} {cat.name}</div>
+                      <div style={{ fontSize: '1.2em', color: '#2d3748', fontWeight: 600 }}>{categoryTotals[cat.name].toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>JPY</span></div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
             <form onSubmit={handleAddExpense} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '30px', background: '#fffaf0', padding: '20px', borderRadius: '12px', border: '1px solid #f6e05e', boxSizing: 'border-box' }}>
-              {/* 💡 完美的 Flex Wrap 排版，保護所有輸入框不超出邊界 */}
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <input type="number" placeholder="金額 (JPY)" value={newExpense.amount} required onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                 <select value={newExpense.category} onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', boxSizing: 'border-box' }}>
-                  <option value="飲食">🍔 飲食</option><option value="交通">🚗 交通</option><option value="購物">🛍️ 購物</option><option value="住宿">🛏️ 住宿</option><option value="其他">❓ 其他</option>
+                  {EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}
                 </select>
               </div>
               <input type="text" placeholder="消費明細" value={newExpense.description} onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', width: '100%', boxSizing: 'border-box' }} />
 
-              {/* 💡 加回：不小心被刪掉的「關聯景點」下拉選單 */}
               <select value={newExpense.itemId} onChange={(e) => setNewExpense({ ...newExpense, itemId: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', width: '100%', boxSizing: 'border-box' }}>
                 <option value="">-- 不指定行程景點 --</option>
                 {items.filter(i => i.day_number !== 0).map(item => (<option key={item.id} value={item.id}>Day {item.day_number} - {item.content}</option>))}
