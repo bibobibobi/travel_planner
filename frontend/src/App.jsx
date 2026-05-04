@@ -86,27 +86,66 @@ function App() {
   const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
   const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE' }).then(() => fetchShopping(currentTrip.id)) } }
 
-  // --- 記帳操作 (支援圖片上傳) ---
-  const handleAddExpense = (e) => {
-    e.preventDefault()
-    // 因為有圖片，改用 FormData 而不是 JSON
+  // --- 新增：前端圖片壓縮小工具 ---
+  const compressImage = (file) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const MAX_WIDTH = 800; // 強制把圖片寬度縮到 800px (非常夠看了)
+          const ratio = MAX_WIDTH / img.width;
+          const canvas = document.createElement('canvas');
+          canvas.width = MAX_WIDTH;
+          canvas.height = img.height * ratio;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          // 將壓縮後的圖片轉回檔案格式，設定畫質為 70%
+          canvas.toBlob((blob) => {
+            resolve(new File([blob], file.name, { type: 'image/jpeg' }));
+          }, 'image/jpeg', 0.7);
+        };
+      };
+    });
+  };
+
+  // --- 更新：記帳操作 (支援非同步壓縮與錯誤攔截) ---
+  const handleAddExpense = async (e) => {
+    e.preventDefault();
     const formData = new FormData();
     formData.append('trip_id', currentTrip.id);
     formData.append('amount', newExpense.amount);
     formData.append('category', newExpense.category);
     formData.append('description', newExpense.description);
     if (newExpense.itemId) formData.append('itemId', newExpense.itemId);
-    if (newExpense.receipt_image) formData.append('receipt_image', newExpense.receipt_image);
 
+    // 如果有圖片，先壓縮再放進去！
+    if (newExpense.receipt_image) {
+      const compressedFile = await compressImage(newExpense.receipt_image);
+      formData.append('receipt_image', compressedFile);
+    }
+
+    // 發送給後端
     fetch(`${API_BASE}/expenses`, {
       method: 'POST',
-      body: formData // 不需手動設 Content-Type，瀏覽器會自動處理 formData
-    }).then(() => {
-      fetchExpenses(currentTrip.id);
-      setNewExpense({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null });
-      // 清空檔案選擇器
-      document.getElementById('receipt-upload').value = '';
+      body: formData // FormData 會自動設定正確的 headers，不要手動加 Content-Type
     })
+      .then(res => {
+        if (!res.ok) throw new Error("伺服器拒絕接收檔案");
+        return res.json();
+      })
+      .then(() => {
+        fetchExpenses(currentTrip.id);
+        setNewExpense({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null });
+        document.getElementById('receipt-upload').value = '';
+      })
+      .catch(err => {
+        console.error(err);
+        alert("記帳失敗：可能是網路問題或圖片仍然太大！");
+      });
   }
   const deleteExpense = (id) => { if (window.confirm("確定刪除這筆花費？")) { fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE' }).then(() => fetchExpenses(currentTrip.id)) } }
 
