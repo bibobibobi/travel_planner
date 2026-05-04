@@ -38,7 +38,6 @@ function App() {
   const [editingShopId, setEditingShopId] = useState(null)
   const [editShopForm, setEditShopForm] = useState({})
   
-  // 💡 補上：記帳編輯狀態
   const [expenses, setExpenses] = useState([])
   const [editingExpenseId, setEditingExpenseId] = useState(null)
   const [editExpenseForm, setEditExpenseForm] = useState({})
@@ -133,7 +132,6 @@ function App() {
     fetch(`${API_BASE}/expenses`, { method: 'POST', body: formData }).then(() => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null }); document.getElementById('receipt-upload').value = ''; })
   }
   
-  // 💡 補上：儲存記帳編輯
   const saveEditedExpense = () => {
     fetch(`${API_BASE}/expenses/${editingExpenseId}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -296,12 +294,12 @@ function App() {
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             <h2 style={{ color: '#2c7a7b', marginTop: 0, fontWeight: 600 }}>🛒 購物清單</h2>
             <form onSubmit={handleAddShop} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '25px', background: '#f0f9ff', padding: '20px', borderRadius: '12px', border: '1px solid #bae3ff', boxSizing: 'border-box' }}>
-              <input type="text" placeholder="想買什麼？ (如: 防曬乳)" value={newShopForm.name} onChange={e => setNewShopForm({ ...newShopForm, name: e.target.value })} required style={{ padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-              <input type="text" placeholder="哪裡買？" value={newShopForm.location} onChange={e => setNewShopForm({ ...newShopForm, location: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+              <input type="text" placeholder="想買什麼？ (如: 防曬乳)" value={newShopForm.name} onChange={e => setNewShopForm({ ...newShopForm, name: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+              <input type="text" placeholder="哪裡買？ (如: 機場免稅店)" value={newShopForm.location} onChange={e => setNewShopForm({ ...newShopForm, location: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <label htmlFor="shop-upload" style={{ flex: 1, padding: '12px', backgroundColor: newShopForm.item_image ? '#ebf8ff' : '#fff', color: newShopForm.item_image ? '#2b6cb0' : '#4a5568', borderRadius: '8px', border: newShopForm.item_image ? '1px solid #3182ce' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', boxSizing: 'border-box' }}>{newShopForm.item_image ? '✅ 已選圖片' : '🖼️ 選相片'}</label>
+                <label htmlFor="shop-upload" style={{ flex: '1 1 120px', padding: '12px', backgroundColor: newShopForm.item_image ? '#ebf8ff' : '#fff', color: newShopForm.item_image ? '#2b6cb0' : '#4a5568', borderRadius: '8px', border: newShopForm.item_image ? '1px solid #3182ce' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', boxSizing: 'border-box' }}>{newShopForm.item_image ? '✅ 已選圖片' : '🖼️ 選相片'}</label>
                 <input id="shop-upload" type="file" accept="image/*" onChange={e => setNewShopForm({ ...newShopForm, item_image: e.target.files[0] })} style={{ display: 'none' }} />
-                <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, outline: 'none', cursor: 'pointer', fontSize: '16px', boxSizing: 'border-box' }}>＋ 新增</button>
+                <button type="submit" style={{ flex: '1 1 120px', padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, outline: 'none', cursor: 'pointer', fontSize: '16px', boxSizing: 'border-box' }}>＋ 新增</button>
               </div>
             </form>
             <ul style={{ listStyle: 'none', padding: 0 }}>
@@ -339,6 +337,7 @@ function App() {
           </div>
         )}
 
+        {/* --- 記帳分頁 (終極版面優化) --- */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -384,28 +383,38 @@ function App() {
                 return (
                   <li key={exp.id} style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '15px', marginBottom: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', boxSizing: 'border-box' }}>
                     {editingExpenseId === exp.id ? (
+                      // 💡 完美不破版的直向編輯表單
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
-                        <div style={{ display: 'flex', gap: '10px' }}>
-                          <input type="number" value={editExpenseForm.amount} onChange={e => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px' }} />
-                          <select value={editExpenseForm.category} onChange={e => setEditExpenseForm({ ...editExpenseForm, category: e.target.value })} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px' }}>{EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
-                        </div>
-                        <input type="text" value={editExpenseForm.description} onChange={e => setEditExpenseForm({ ...editExpenseForm, description: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px' }} />
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                          <button onClick={() => setEditingExpenseId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer' }}>取消</button>
-                          <button onClick={saveEditedExpense} style={{ padding: '6px 12px', border: 'none', background: '#f56565', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>儲存</button>
+                        <input type="number" value={editExpenseForm.amount} onChange={e => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })} placeholder="金額 (JPY)" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                        <select value={editExpenseForm.category} onChange={e => setEditExpenseForm({ ...editExpenseForm, category: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }}>{EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
+                        <input type="text" value={editExpenseForm.description} onChange={e => setEditExpenseForm({ ...editExpenseForm, description: e.target.value })} placeholder="消費明細" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '5px' }}>
+                          <button onClick={() => setEditingExpenseId(null)} style={{ padding: '8px 16px', border: 'none', background: '#e2e8f0', color: '#4a5568', borderRadius: '6px', cursor: 'pointer', fontSize: '15px', fontWeight: 600 }}>取消</button>
+                          <button onClick={saveEditedExpense} style={{ padding: '8px 16px', border: 'none', background: '#f56565', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '15px' }}>儲存</button>
                         </div>
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}><strong style={{ color: '#2d3748' }}>{exp.category}</strong> - <span style={{ color: '#4a5568' }}>{exp.description}</span></div>
-                          {relatedItem && <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '4px' }}>📍 Day {relatedItem.day_number} - {relatedItem.content}</div>}
+                      // 💡 分離式卡片設計：上層純文字、下層數字與操作
+                      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '8px' }}>
+                        {/* 上半部：類別與明細 */}
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <strong style={{ color: '#2d3748', fontSize: '1.05em', marginBottom: '4px' }}>{exp.category}</strong>
+                          <span style={{ color: '#4a5568', fontSize: '0.95em', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
+                            {exp.description || '無明細'}
+                          </span>
+                          {relatedItem && <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '6px' }}>📍 Day {relatedItem.day_number} - {relatedItem.content}</div>}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
-                          {exp.image_url && <a href={exp.image_url} target="_blank" rel="noopener noreferrer" style={{ padding: '10px', fontSize: '0.9rem' }}>🖼️</a>}
-                          <strong style={{ color: '#e53e3e', margin: '0 5px' }}>{Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.7em' }}>JPY</span></strong>
-                          <button onClick={() => { setEditingExpenseId(exp.id); setEditExpenseForm(exp); }} style={{ background: 'none', border: 'none', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>✏️</button>
-                          <button onClick={() => deleteExpense(exp.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>🗑️</button>
+                        
+                        {/* 下半部：金額與按鈕（分隔線區開） */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed #e2e8f0', paddingTop: '12px', marginTop: '4px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {exp.image_url && <a href={exp.image_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '1.1rem', backgroundColor: '#edf2f7', padding: '6px', borderRadius: '6px' }}>🖼️</a>}
+                            <strong style={{ color: '#e53e3e', fontSize: '1.2em' }}>{Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>JPY</span></strong>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={() => { setEditingExpenseId(exp.id); setEditExpenseForm(exp); }} style={{ background: '#edf2f7', border: 'none', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>✏️</button>
+                            <button onClick={() => deleteExpense(exp.id)} style={{ background: '#fff5f5', border: 'none', color: '#fc8181', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>🗑️</button>
+                          </div>
                         </div>
                       </div>
                     )}
