@@ -29,7 +29,6 @@ function App() {
   const [items, setItems] = useState([])
   const [editingItemId, setEditingItemId] = useState(null)
   const [editItemForm, setEditItemForm] = useState({})
-  // 新增 category 狀態
   const [newItemForm, setNewItemForm] = useState({ content: '', start_time: '', map_url: '', memo: '', category: '景點' })
 
   // 購物清單狀態
@@ -38,7 +37,7 @@ function App() {
   const [editingShopId, setEditingShopId] = useState(null)
   const [editShopForm, setEditShopForm] = useState({})
 
-  // 記帳狀態 (加入 receipt_image)
+  // 記帳狀態
   const [expenses, setExpenses] = useState([])
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null })
 
@@ -86,7 +85,7 @@ function App() {
   const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
   const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE' }).then(() => fetchShopping(currentTrip.id)) } }
 
-  // --- 新增：前端圖片壓縮小工具 ---
+  // --- 前端圖片壓縮小工具 ---
   const compressImage = (file) => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -95,7 +94,7 @@ function App() {
         const img = new Image();
         img.src = event.target.result;
         img.onload = () => {
-          const MAX_WIDTH = 800; // 強制把圖片寬度縮到 800px (非常夠看了)
+          const MAX_WIDTH = 800;
           const ratio = MAX_WIDTH / img.width;
           const canvas = document.createElement('canvas');
           canvas.width = MAX_WIDTH;
@@ -103,7 +102,6 @@ function App() {
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-          // 將壓縮後的圖片轉回檔案格式，設定畫質為 70%
           canvas.toBlob((blob) => {
             resolve(new File([blob], file.name, { type: 'image/jpeg' }));
           }, 'image/jpeg', 0.7);
@@ -112,7 +110,7 @@ function App() {
     });
   };
 
-  // --- 更新：記帳操作 (支援非同步壓縮與錯誤攔截) ---
+  // --- 記帳操作 (支援圖片上傳) ---
   const handleAddExpense = async (e) => {
     e.preventDefault();
     const formData = new FormData();
@@ -122,16 +120,14 @@ function App() {
     formData.append('description', newExpense.description);
     if (newExpense.itemId) formData.append('itemId', newExpense.itemId);
 
-    // 如果有圖片，先壓縮再放進去！
     if (newExpense.receipt_image) {
       const compressedFile = await compressImage(newExpense.receipt_image);
       formData.append('receipt_image', compressedFile);
     }
 
-    // 發送給後端
     fetch(`${API_BASE}/expenses`, {
       method: 'POST',
-      body: formData // FormData 會自動設定正確的 headers，不要手動加 Content-Type
+      body: formData
     })
       .then(res => {
         if (!res.ok) throw new Error("伺服器拒絕接收檔案");
@@ -168,12 +164,6 @@ function App() {
   }
 
   const totalExpense = expenses.reduce((sum, exp) => sum + exp.amount, 0)
-
-  // 取得類別顏色樣式的 Helper
-  const getCategoryStyle = (catName) => {
-    const cat = ITEM_CATEGORIES.find(c => c.name === catName) || ITEM_CATEGORIES[0];
-    return { color: cat.color, backgroundColor: cat.bg, padding: '4px 8px', borderRadius: '6px', fontSize: '0.85em', fontWeight: 'bold', border: `1px solid ${cat.color}40` };
-  }
 
   // ================= 渲染：大廳 =================
   if (!currentTrip) {
@@ -247,51 +237,66 @@ function App() {
           {(provided, snapshot) => (
             <div {...provided.droppableProps} ref={provided.innerRef} style={{ minHeight: '80px', borderRadius: '12px', transition: 'background-color 0.2s', backgroundColor: snapshot.isDraggingOver ? '#cbd5e0' : 'transparent' }}>
               {dayItems.length === 0 && <div style={{ textAlign: 'center', color: '#a0aec0', padding: '20px 0', border: '2px dashed #cbd5e0', borderRadius: '12px', fontSize: '14px', margin: '5px 0' }}>{isWishlist ? '沒有願望？快去新增一些吧！' : '放鬆的一天，還沒排行程喔！'}</div>}
-              {dayItems.map((item, index) => (
-                <Draggable key={item.id} draggableId={item.id} index={index}>
-                  {(provided, snapshot) => (
-                    <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}
-                      style={{ userSelect: 'none', padding: '16px', margin: '0 0 10px 0', backgroundColor: '#ffffff', borderRadius: '10px', boxShadow: snapshot.isDragging ? '0 10px 25px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.05)', ...provided.draggableProps.style }}>
+              {dayItems.map((item, index) => {
+                // 💡 取得對應類別的設定
+                const cat = ITEM_CATEGORIES.find(c => c.name === (item.category || '景點')) || ITEM_CATEGORIES[0];
 
-                      {editingItemId === item.id ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                            <select value={editItemForm.category || '景點'} onChange={e => setEditItemForm({ ...editItemForm, category: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }}>
-                              {ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}
-                            </select>
-                            <input type="time" value={editItemForm.start_time || ''} onChange={e => setEditItemForm({ ...editItemForm, start_time: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
-                            <input type="text" value={editItemForm.content} onChange={e => setEditItemForm({ ...editItemForm, content: e.target.value })} placeholder="景點名稱" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
-                          </div>
-                          <input type="url" value={editItemForm.map_url || ''} onChange={e => setEditItemForm({ ...editItemForm, map_url: e.target.value })} placeholder="Google Map 連結 (選填)" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box' }} />
-                          <textarea value={editItemForm.memo || ''} onChange={e => setEditItemForm({ ...editItemForm, memo: e.target.value })} placeholder="備註事項" rows="2" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', resize: 'vertical' }} />
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                            <button onClick={() => setEditingItemId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer' }}>取消</button>
-                            <button onClick={saveEditedItem} style={{ padding: '6px 12px', border: 'none', background: '#3182ce', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>儲存</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                              <span style={{ color: '#a0aec0', fontSize: '18px', cursor: 'grab' }}>⋮⋮</span>
-                              {item.start_time && <span style={{ backgroundColor: '#edf2f7', color: '#4a5568', padding: '4px 8px', borderRadius: '6px', fontSize: '0.9em', fontWeight: 'bold' }}>{item.start_time}</span>}
-                              {/* 顯示類別標籤 */}
-                              <span style={getCategoryStyle(item.category || '景點')}>{ITEM_CATEGORIES.find(c => c.name === (item.category || '景點'))?.icon} {item.category || '景點'}</span>
-                              <strong style={{ fontSize: '1.1em', color: '#2d3748', wordBreak: 'break-word' }}>{item.content}</strong>
+                return (
+                  <Draggable key={item.id} draggableId={item.id} index={index}>
+                    {(provided, snapshot) => (
+                      <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}
+                        style={{
+                          userSelect: 'none',
+                          padding: '16px',
+                          margin: '0 0 10px 0',
+                          backgroundColor: '#ffffff',
+                          borderRadius: '10px',
+                          boxShadow: snapshot.isDragging ? '0 10px 25px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.05)',
+                          // 🎨 方案 A：左側粗邊框色條
+                          borderLeft: `6px solid ${cat.color}`,
+                          ...provided.draggableProps.style
+                        }}>
+
+                        {editingItemId === item.id ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                              <select value={editItemForm.category || '景點'} onChange={e => setEditItemForm({ ...editItemForm, category: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }}>
+                                {ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}
+                              </select>
+                              <input type="time" value={editItemForm.start_time || ''} onChange={e => setEditItemForm({ ...editItemForm, start_time: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
+                              <input type="text" value={editItemForm.content} onChange={e => setEditItemForm({ ...editItemForm, content: e.target.value })} placeholder="景點名稱" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0' }} />
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              {item.map_url && <a href={item.map_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '1.2em' }}>📍</a>}
-                              <button onClick={() => { setEditingItemId(item.id); setEditItemForm(item) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1em' }}>✏️</button>
-                              <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1em', color: '#fc8181' }}>🗑️</button>
+                            <input type="url" value={editItemForm.map_url || ''} onChange={e => setEditItemForm({ ...editItemForm, map_url: e.target.value })} placeholder="Google Map 連結 (選填)" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box' }} />
+                            <textarea value={editItemForm.memo || ''} onChange={e => setEditItemForm({ ...editItemForm, memo: e.target.value })} placeholder="備註事項" rows="2" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', resize: 'vertical' }} />
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                              <button onClick={() => setEditingItemId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer' }}>取消</button>
+                              <button onClick={saveEditedItem} style={{ padding: '6px 12px', border: 'none', background: '#3182ce', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>儲存</button>
                             </div>
                           </div>
-                          {item.memo && <div style={{ marginTop: '10px', marginLeft: '28px', padding: '10px', backgroundColor: '#fcfaf2', borderLeft: '4px solid #f6e05e', borderRadius: '4px', fontSize: '0.9em', color: '#555', whiteSpace: 'pre-wrap' }}>{item.memo}</div>}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </Draggable>
-              ))}
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                <span style={{ color: '#a0aec0', fontSize: '18px', cursor: 'grab' }}>⋮⋮</span>
+                                {/* 💡 拿掉文字標籤，只保留乾淨的 Emoji 增加辨識度 */}
+                                <span style={{ fontSize: '1.2em' }} title={cat.name}>{cat.icon}</span>
+                                {item.start_time && <span style={{ backgroundColor: '#edf2f7', color: '#4a5568', padding: '4px 8px', borderRadius: '6px', fontSize: '0.9em', fontWeight: 'bold' }}>{item.start_time}</span>}
+                                <strong style={{ fontSize: '1.1em', color: '#2d3748', wordBreak: 'break-word' }}>{item.content}</strong>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {item.map_url && <a href={item.map_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '1.2em' }}>📍</a>}
+                                <button onClick={() => { setEditingItemId(item.id); setEditItemForm(item) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1em' }}>✏️</button>
+                                <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1em', color: '#fc8181' }}>🗑️</button>
+                              </div>
+                            </div>
+                            {item.memo && <div style={{ marginTop: '10px', marginLeft: '28px', padding: '10px', backgroundColor: '#fcfaf2', borderLeft: '4px solid #f6e05e', borderRadius: '4px', fontSize: '0.9em', color: '#555', whiteSpace: 'pre-wrap' }}>{item.memo}</div>}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </Draggable>
+                );
+              })}
               {provided.placeholder}
             </div>
           )}
@@ -345,7 +350,7 @@ function App() {
           </>
         )}
 
-        {/* --- 購物清單 --- (保持不變) */}
+        {/* --- 購物清單 --- */}
         {activeTab === 'shopping' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
             <h2 style={{ color: '#2c7a7b', marginTop: 0 }}>🛒 購物清單</h2>
@@ -373,7 +378,7 @@ function App() {
           </div>
         )}
 
-        {/* --- 旅遊記帳 (加入圖片預覽與上傳) --- */}
+        {/* --- 旅遊記帳 --- */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '25px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
@@ -394,7 +399,6 @@ function App() {
                   <option value="">-- 不指定行程景點 --</option>
                   {items.filter(i => i.day_number !== 0).map(item => (<option key={item.id} value={item.id}>Day {item.day_number} - {item.content}</option>))}
                 </select>
-                {/* 拍照/上傳按鈕 (手機上會自動彈出相機或相簿選擇) */}
                 <div style={{ flex: '1 1 200px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <label htmlFor="receipt-upload" style={{ padding: '12px', backgroundColor: '#edf2f7', color: '#4a5568', borderRadius: '8px', cursor: 'pointer', border: '1px solid #cbd5e0', textAlign: 'center', flex: 1, fontWeight: 'bold' }}>
                     📸 拍照 / 附上收據
@@ -422,7 +426,6 @@ function App() {
                         <button onClick={() => deleteExpense(exp.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', fontSize: '1.2em' }}>🗑️</button>
                       </div>
                     </div>
-                    {/* 顯示夾帶的收據照片 */}
                     {exp.image_url && (
                       <div style={{ marginTop: '10px', borderTop: '1px dashed #e2e8f0', paddingTop: '10px' }}>
                         <a href={exp.image_url} target="_blank" rel="noopener noreferrer">
