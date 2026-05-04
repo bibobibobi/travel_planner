@@ -40,6 +40,9 @@ function App() {
   const [expenses, setExpenses] = useState([])
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null })
 
+  // 💡 新增：AI 掃描的 Loading 狀態
+  const [isScanning, setIsScanning] = useState(false)
+
   const getTripDays = (start, end) => {
     const d1 = new Date(start); const d2 = new Date(end);
     return (Math.ceil(Math.abs(d2 - d1) / (1000 * 60 * 60 * 24)) + 1) || 1
@@ -98,6 +101,43 @@ function App() {
   const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
   const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE' }).then(() => fetchShopping(currentTrip.id)) } }
 
+  // ====== 🤖 AI 掃描處理 ======
+  const handleAIScan = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsScanning(true);
+    try {
+      const compressed = await compressImage(file);
+      const formData = new FormData();
+      formData.append('receipt_image', compressed);
+
+      const res = await fetch(`${API_BASE}/scan-receipt`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!res.ok) throw new Error("伺服器辨識失敗");
+      const aiData = await res.json();
+
+      // 將 AI 回傳的資料「預先填入」表單中，順便把照片也帶上去！
+      setNewExpense({
+        ...newExpense,
+        amount: aiData.amount || '',
+        description: aiData.description || '',
+        category: aiData.category || '其他',
+        receipt_image: file // 保留原始檔案，待會存檔時一併上傳
+      });
+
+    } catch (err) {
+      console.error(err);
+      alert("Oops! AI 看不懂這張發票，請手動填寫或重拍一次。");
+    } finally {
+      setIsScanning(false);
+      e.target.value = ''; // 清空 input 以防連選同一張照片沒反應
+    }
+  }
+
   const handleAddExpense = async (e) => {
     e.preventDefault();
     if (!newExpense.amount) return;
@@ -137,7 +177,6 @@ function App() {
     border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '16px'
   });
 
-  // ====== 渲染：大廳 ======
   if (!currentTrip) {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', fontFamily: '"Segoe UI", sans-serif' }}>
@@ -168,7 +207,6 @@ function App() {
     )
   }
 
-  // ====== 渲染：看板 ======
   const renderDayColumn = (day, title = null) => {
     const dayItems = items.filter(item => item.day_number === day).sort((a, b) => a.order_index - b.order_index);
     const isWishlist = day === 0;
@@ -216,7 +254,6 @@ function App() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
                                 <span style={{ fontSize: '1.2em' }} title={cat.name}>{cat.icon}</span>
                                 {item.start_time && <span style={{ fontSize: '0.85em', fontWeight: 600, background: '#f0f4f8', color: '#4a5568', padding: '2px 6px', borderRadius: '4px' }}>{item.start_time}</span>}
-                                {/* 💡 文字截斷：景點名稱 */}
                                 <strong style={{ fontSize: '1.1em', color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{item.content}</strong>
                               </div>
                               <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
@@ -241,11 +278,8 @@ function App() {
     )
   }
 
-  // ====== 整個版面渲染 ======
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', fontFamily: '"Segoe UI", sans-serif' }}>
-      
-      {/* 頂部選單 */}
       <div style={{ backgroundColor: '#ffffff', padding: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10, boxSizing: 'border-box' }}>
         <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
           <button onClick={() => setCurrentTrip(null)} style={{ padding: '8px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', fontWeight: 600, cursor: 'pointer', outline: 'none', color: '#4a5568', fontSize: '15px' }}>🔙 大廳</button>
@@ -259,7 +293,6 @@ function App() {
       </div>
 
       <div style={{ padding: '20px 15px', maxWidth: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
-        
         {/* --- 看板分頁 --- */}
         {activeTab === 'itinerary' && (
           <>
@@ -315,9 +348,7 @@ function App() {
                           </a>
                         )}
                         <div style={{ flex: 1, minWidth: 0, textDecoration: item.is_bought ? 'line-through' : 'none' }}>
-                          {/* 💡 文字截斷：購物名稱 */}
                           <strong style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: '#2d3748', fontSize: '1.05em', wordBreak: 'break-word' }}>{item.name}</strong>
-                          {/* 💡 文字截斷：地點名稱 (最多1行) */}
                           {item.location && <span style={{ fontSize: '0.85em', color: '#718096', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word', marginTop: '2px' }}>📍 {item.location}</span>}
                         </div>
                       </div>
@@ -334,7 +365,7 @@ function App() {
           </div>
         )}
 
-        {/* --- 記帳分頁 --- */}
+        {/* --- 記帳分頁 (加入 AI 掃描按鈕) --- */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             
@@ -344,7 +375,7 @@ function App() {
             </div>
 
             {Object.keys(categoryTotals).length > 0 && (
-              <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '25px', WebkitOverflowScrolling: 'touch' }}>
+              <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '20px', WebkitOverflowScrolling: 'touch' }}>
                 {EXPENSE_CATEGORIES.map(cat => {
                   if (!categoryTotals[cat.name]) return null;
                   return (
@@ -357,6 +388,14 @@ function App() {
               </div>
             )}
             
+            {/* 🤖 獨立出來的超酷 AI 掃描按鈕 */}
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px', backgroundColor: isScanning ? '#e2e8f0' : '#e6fffa', color: isScanning ? '#718096' : '#234e52', borderRadius: '12px', border: `2px dashed ${isScanning ? '#cbd5e0' : '#319795'}`, cursor: isScanning ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '16px', transition: 'all 0.3s' }}>
+                {isScanning ? '🤖 AI 正在看發票中，請稍候...' : '✨ AI 自動掃描發票'}
+                <input type="file" accept="image/*" capture="environment" onChange={handleAIScan} disabled={isScanning} style={{ display: 'none' }} />
+              </label>
+            </div>
+
             <form onSubmit={handleAddExpense} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '30px', background: '#fffaf0', padding: '20px', borderRadius: '12px', border: '1px solid #f6e05e', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <input type="number" placeholder="金額 (JPY)" value={newExpense.amount} required onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
@@ -372,10 +411,12 @@ function App() {
               </select>
 
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <label htmlFor="receipt-upload" style={{ flex: '1 1 120px', padding: '12px', backgroundColor: newExpense.receipt_image ? '#e6fffa' : '#fff', color: newExpense.receipt_image ? '#276749' : '#4a5568', borderRadius: '8px', border: newExpense.receipt_image ? '1px solid #38a169' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>
-                  {newExpense.receipt_image ? '✅ 已附照片' : '📸 拍照收據'}
+                {/* 這是原本的手動附圖按鈕 (如果使用者不用 AI 掃，純碎想留存底) */}
+                <label htmlFor="receipt-upload" style={{ flex: '1 1 120px', padding: '12px', backgroundColor: newExpense.receipt_image ? '#ebf8ff' : '#fff', color: newExpense.receipt_image ? '#2b6cb0' : '#4a5568', borderRadius: '8px', border: newExpense.receipt_image ? '1px solid #3182ce' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>
+                  {newExpense.receipt_image ? '✅ 照片已準備' : '📸 附加發票照'}
                 </label>
                 <input id="receipt-upload" type="file" accept="image/*" capture="environment" onChange={e => setNewExpense({ ...newExpense, receipt_image: e.target.files[0] })} style={{ display: 'none' }} />
+                
                 <button type="submit" style={{ flex: '1 1 120px', padding: '12px', backgroundColor: '#f56565', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}>＋ 記一筆</button>
               </div>
             </form>
@@ -387,7 +428,6 @@ function App() {
                   <li key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px', borderBottom: '1px solid #eee', gap: '10px', boxSizing: 'border-box' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
-                        {/* 💡 文字截斷：記帳類別與明細 */}
                         <strong style={{ color: '#2d3748' }}>{exp.category}</strong> - <span style={{ color: '#4a5568' }}>{exp.description}</span>
                       </div>
                       {relatedItem && <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📍 Day {relatedItem.day_number} - {relatedItem.content}</div>}

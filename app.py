@@ -4,6 +4,15 @@ from flask_cors import CORS
 from datetime import datetime
 import os
 from werkzeug.utils import secure_filename
+import json
+
+# 新增的 AI 與圖片處理套件
+import google.generativeai as genai
+from PIL import Image
+import io
+
+# 💡 填入你的 Gemini API 金鑰
+genai.configure(api_key="AIzaSyAcwz8V8WLpDEfzkhqmZOiPjQp4jOimLd8")
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://travel_user:travel123@localhost/travel_db'
@@ -58,7 +67,7 @@ class ShoppingItem(db.Model):
     name = db.Column(db.String(100), nullable=False)
     location = db.Column(db.String(100), nullable=True)
     is_bought = db.Column(db.Boolean, default=False)
-    image_url = db.Column(db.String(200), nullable=True) # 新增欄位
+    image_url = db.Column(db.String(200), nullable=True)
 
 with app.app_context():
     db.create_all()
@@ -71,7 +80,54 @@ def index():
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# --- 行程 API ---
+# ====== 🤖 核心功能：AI 掃描發票 API ======
+@app.route('/api/scan-receipt', methods=['POST'])
+def scan_receipt():
+    try:
+        if 'receipt_image' not in request.files:
+            return jsonify({"error": "沒有圖片"}), 400
+            
+        file = request.files['receipt_image']
+        
+        # 在記憶體中打開圖片，不存進硬碟
+        image_data = file.read()
+        image = Image.open(io.BytesIO(image_data))
+        
+        # 呼叫 Gemini 模型
+        model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
+        
+        # 給 AI 的嚴格且聰明的指令 (解除字數限制版)
+        prompt = """
+        你是一個專業的旅遊記帳助手。請看這張發票或收據的照片，並找出以下資訊：
+        1. 最終結帳的「總金額」(只要純數字，排除稅額計算的過程，抓取最終付款總額)。
+        2. 「消費明細」：請先寫出【店家名稱】，接著用破折號加上【代表性的商品清單】(盡量列出完整品項，字數不限)。
+           【翻譯與保留規則】：請以「繁體中文」輸出。但特定的品牌、店名、或日本漢字商品名（如：松本清、唐吉訶德、休足時間、雪肌精等）請「保留原文」不翻譯。一般物品才翻譯。
+           (範例："MEGA 唐吉訶德 - 休足時間、洗面乳、抹茶巧克力、綠茶、塑膠袋")
+        3. 「消費類別」，只能根據這張發票的"主要"屬性，從這五個嚴格選一個：飲食、交通、購物、住宿、其他。
+
+        請嚴格只回傳 JSON 格式，不要有任何多餘的引言或 markdown 符號。
+        格式範例：
+        {"amount": "5400", "description": "松本清 - 合利他命、雪肌精化妝水、感冒藥、護唇膏、棉花棒", "category": "購物"}
+        """
+        
+        response = model.generate_content([prompt, image])
+        res_text = response.text.strip()
+        
+        # 清理可能帶有的 Markdown 標記 (Gemini有時會雞婆加上 ```json )
+        if res_text.startswith('```json'):
+            res_text = res_text[7:-3].strip()
+        elif res_text.startswith('```'):
+            res_text = res_text[3:-3].strip()
+            
+        # 轉成 Python 字典並回傳給前端
+        parsed_data = json.loads(res_text)
+        return jsonify(parsed_data), 200
+
+    except Exception as e:
+        print("AI 辨識錯誤:", str(e))
+        return jsonify({"error": "無法辨識圖片，請手動輸入"}), 500
+
+# --- 其餘既有的 API 路由保持完全不變 ---
 @app.route('/api/trips', methods=['GET', 'POST'])
 def handle_trips():
     if request.method == 'POST':
@@ -97,7 +153,6 @@ def modify_trip(trip_id):
     db.session.commit()
     return jsonify({"status": "success"})
 
-# --- 景點 API ---
 @app.route('/api/items', methods=['GET', 'POST'])
 def handle_items():
     if request.method == 'POST':
@@ -139,7 +194,6 @@ def reorder_items():
     db.session.commit()
     return jsonify({"status": "success"})
 
-# --- 記帳 API (支援圖片上傳) ---
 @app.route('/api/expenses', methods=['GET', 'POST'])
 def handle_expenses():
     if request.method == 'POST':
@@ -174,7 +228,6 @@ def delete_expense(exp_id):
     db.session.commit()
     return jsonify({"status": "deleted"})
 
-# --- 購物清單 API (升級支援圖片上傳) ---
 @app.route('/api/shopping', methods=['GET', 'POST'])
 def handle_shopping():
     if request.method == 'POST':
@@ -205,7 +258,6 @@ def modify_shopping(item_id):
     if request.method == 'DELETE':
         db.session.delete(item)
     else:
-        # 處理打勾狀態
         data = request.get_json()
         if 'is_bought' in data: item.is_bought = data['is_bought']
         if 'name' in data: item.name = data['name']
