@@ -13,7 +13,6 @@ const ITEM_CATEGORIES = [
   { name: '其他', icon: '❓', color: '#718096', bg: '#f7fafc' }
 ];
 
-// 💡 新增：記帳專用的分類與圖示對應
 const EXPENSE_CATEGORIES = [
   { name: '飲食', icon: '🍔' },
   { name: '交通', icon: '🚗' },
@@ -123,10 +122,8 @@ function App() {
     fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reordered_items: payload }) });
   }
 
-  // --- 💡 總花費與各分類花費計算 ---
   const totalExpense = Array.isArray(expenses) ? expenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0) : 0;
-
-  // 計算各類別總和
+  
   const categoryTotals = Array.isArray(expenses) ? expenses.reduce((acc, exp) => {
     const cat = exp.category || '其他';
     acc[cat] = (acc[cat] || 0) + (Number(exp.amount) || 0);
@@ -216,10 +213,11 @@ function App() {
                         ) : (
                           <>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
                                 <span style={{ fontSize: '1.2em' }} title={cat.name}>{cat.icon}</span>
                                 {item.start_time && <span style={{ fontSize: '0.85em', fontWeight: 600, background: '#f0f4f8', color: '#4a5568', padding: '2px 6px', borderRadius: '4px' }}>{item.start_time}</span>}
-                                <strong style={{ fontSize: '1.1em', color: '#2d3748', wordBreak: 'break-word', fontWeight: 600 }}>{item.content}</strong>
+                                {/* 💡 文字截斷：景點名稱 */}
+                                <strong style={{ fontSize: '1.1em', color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{item.content}</strong>
                               </div>
                               <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
                                 {item.map_url && <a href={item.map_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '0.9rem', padding: '10px' }}>📍</a>}
@@ -246,7 +244,7 @@ function App() {
   // ====== 整個版面渲染 ======
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', fontFamily: '"Segoe UI", sans-serif' }}>
-
+      
       {/* 頂部選單 */}
       <div style={{ backgroundColor: '#ffffff', padding: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10, boxSizing: 'border-box' }}>
         <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
@@ -261,7 +259,7 @@ function App() {
       </div>
 
       <div style={{ padding: '20px 15px', maxWidth: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
-
+        
         {/* --- 看板分頁 --- */}
         {activeTab === 'itinerary' && (
           <>
@@ -317,8 +315,10 @@ function App() {
                           </a>
                         )}
                         <div style={{ flex: 1, minWidth: 0, textDecoration: item.is_bought ? 'line-through' : 'none' }}>
-                          <strong style={{ display: 'block', color: '#2d3748', fontSize: '1.05em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</strong>
-                          {item.location && <span style={{ fontSize: '0.85em', color: '#718096', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📍 {item.location}</span>}
+                          {/* 💡 文字截斷：購物名稱 */}
+                          <strong style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: '#2d3748', fontSize: '1.05em', wordBreak: 'break-word' }}>{item.name}</strong>
+                          {/* 💡 文字截斷：地點名稱 (最多1行) */}
+                          {item.location && <span style={{ fontSize: '0.85em', color: '#718096', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word', marginTop: '2px' }}>📍 {item.location}</span>}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
@@ -334,16 +334,15 @@ function App() {
           </div>
         )}
 
-        {/* --- 記帳分頁 (加入分類加總) --- */}
+        {/* --- 記帳分頁 --- */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
-
+            
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0, color: '#c53030', fontWeight: 600 }}>目前總花費</h2>
               <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e' }}>{totalExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>JPY</span></span>
             </div>
 
-            {/* 💡 新增：分類各別加總呈現區塊 (可橫向滾動) */}
             {Object.keys(categoryTotals).length > 0 && (
               <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '25px', WebkitOverflowScrolling: 'touch' }}>
                 {EXPENSE_CATEGORIES.map(cat => {
@@ -357,7 +356,7 @@ function App() {
                 })}
               </div>
             )}
-
+            
             <form onSubmit={handleAddExpense} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '30px', background: '#fffaf0', padding: '20px', borderRadius: '12px', border: '1px solid #f6e05e', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <input type="number" placeholder="金額 (JPY)" value={newExpense.amount} required onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
@@ -366,7 +365,7 @@ function App() {
                 </select>
               </div>
               <input type="text" placeholder="消費明細" value={newExpense.description} onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', width: '100%', boxSizing: 'border-box' }} />
-
+              
               <select value={newExpense.itemId} onChange={(e) => setNewExpense({ ...newExpense, itemId: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', width: '100%', boxSizing: 'border-box' }}>
                 <option value="">-- 不指定行程景點 --</option>
                 {items.filter(i => i.day_number !== 0).map(item => (<option key={item.id} value={item.id}>Day {item.day_number} - {item.content}</option>))}
@@ -387,7 +386,10 @@ function App() {
                 return (
                   <li key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px', borderBottom: '1px solid #eee', gap: '10px', boxSizing: 'border-box' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <strong style={{ color: '#2d3748' }}>{exp.category}</strong> - <span style={{ color: '#4a5568' }}>{exp.description}</span>
+                      <div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
+                        {/* 💡 文字截斷：記帳類別與明細 */}
+                        <strong style={{ color: '#2d3748' }}>{exp.category}</strong> - <span style={{ color: '#4a5568' }}>{exp.description}</span>
+                      </div>
                       {relatedItem && <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📍 Day {relatedItem.day_number} - {relatedItem.content}</div>}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
