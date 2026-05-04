@@ -19,18 +19,22 @@ function App() {
   const [editingLobbyTripId, setEditingLobbyTripId] = useState(null)
   const [lobbyEditForm, setLobbyEditForm] = useState({})
   const [newTripForm, setNewTripForm] = useState({ title: '', start_date: '', end_date: '', budget: '' })
+
   const [activeTab, setActiveTab] = useState('itinerary')
   const [selectedDay, setSelectedDay] = useState(1)
   const [items, setItems] = useState([])
   const [editingItemId, setEditingItemId] = useState(null)
   const [editItemForm, setEditItemForm] = useState({})
   const [newItemForm, setNewItemForm] = useState({ content: '', start_time: '', map_url: '', memo: '', category: '景點' })
+
   const [shoppingItems, setShoppingItems] = useState([])
   const [newShopForm, setNewShopForm] = useState({ name: '', location: '', item_image: null })
+  const [editingShopId, setEditingShopId] = useState(null)
+  const [editShopForm, setEditShopForm] = useState({})
+
   const [expenses, setExpenses] = useState([])
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null })
 
-  // --- 輔助函數 ---
   const getTripDays = (start, end) => {
     const d1 = new Date(start); const d2 = new Date(end);
     return (Math.ceil(Math.abs(d2 - d1) / (1000 * 60 * 60 * 24)) + 1) || 1
@@ -43,7 +47,6 @@ function App() {
     return `${date.getMonth() + 1}/${date.getDate()}`;
   }
 
-  // --- API 呼叫 ---
   useEffect(() => { fetchTrips() }, [])
   const fetchTrips = () => fetch(`${API_BASE}/trips`).then(res => res.json()).then(data => setTrips(Array.isArray(data) ? data : []))
   const selectTrip = (trip) => { setCurrentTrip(trip); setSelectedDay(1); fetchItems(trip.id); fetchExpenses(trip.id); fetchShopping(trip.id); }
@@ -51,7 +54,6 @@ function App() {
   const fetchExpenses = (tripId) => fetch(`${API_BASE}/expenses?trip_id=${tripId}`).then(res => res.json()).then(data => setExpenses(Array.isArray(data) ? data : []))
   const fetchShopping = (tripId) => fetch(`${API_BASE}/shopping?trip_id=${tripId}`).then(res => res.json()).then(data => setShoppingItems(Array.isArray(data) ? data : []))
 
-  // --- 動作處理 ---
   const handleCreateTrip = (e) => { e.preventDefault(); fetch(`${API_BASE}/trips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newTripForm) }).then(() => { fetchTrips(); setNewTripForm({ title: '', start_date: '', end_date: '', budget: '' }) }) }
   const startEditingLobbyTrip = (trip, e) => { e.stopPropagation(); setEditingLobbyTripId(trip.id); setLobbyEditForm(trip) }
   const handleUpdateLobbyTrip = (e) => { e.preventDefault(); fetch(`${API_BASE}/trips/${editingLobbyTripId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lobbyEditForm) }).then(() => { fetchTrips(); setEditingLobbyTripId(null); }) }
@@ -88,10 +90,11 @@ function App() {
     fetch(`${API_BASE}/shopping`, { method: 'POST', body: formData }).then(() => { fetchShopping(currentTrip.id); setNewShopForm({ name: '', location: '', item_image: null }); document.getElementById('shop-upload').value = ''; })
   }
   const toggleBoughtStatus = (item) => { fetch(`${API_BASE}/shopping/${item.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_bought: !item.is_bought }) }).then(() => fetchShopping(currentTrip.id)) }
+  const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
   const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE' }).then(() => fetchShopping(currentTrip.id)) } }
 
   const handleAddExpense = async (e) => {
-    e.preventDefault(); 
+    e.preventDefault();
     if (!newExpense.amount) return;
     const formData = new FormData();
     formData.append('trip_id', currentTrip.id); formData.append('amount', newExpense.amount); formData.append('category', newExpense.category); formData.append('description', newExpense.description);
@@ -114,40 +117,38 @@ function App() {
     fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reordered_items: payload }) });
   }
 
-  // 🛡️ 防崩潰總計
   const totalExpense = Array.isArray(expenses) ? expenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0) : 0;
 
-  // --- 樣式設定 ---
   const getTabStyle = (tabName) => ({
-    padding: '8px 14px', 
-    backgroundColor: activeTab === tabName ? (tabName==='itinerary'?'#e6fffa':tabName==='shopping'?'#ebf8ff':'#fff5f5') : 'transparent', 
-    color: activeTab === tabName ? (tabName==='itinerary'?'#319795':tabName==='shopping'?'#2b6cb0':'#e53e3e') : '#718096', 
-    border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '0.95em'
+    padding: '8px 14px',
+    backgroundColor: activeTab === tabName ? (tabName === 'itinerary' ? '#e6fffa' : tabName === 'shopping' ? '#ebf8ff' : '#fff5f5') : 'transparent',
+    color: activeTab === tabName ? (tabName === 'itinerary' ? '#319795' : tabName === 'shopping' ? '#2b6cb0' : '#e53e3e') : '#718096',
+    border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '16px'
   });
 
-  // ================= 渲染：大廳 =================
+  // ====== 渲染：大廳 ======
   if (!currentTrip) {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', fontFamily: '"Segoe UI", sans-serif' }}>
-        <div style={{ width: '100%', maxWidth: '600px', backgroundColor: '#ffffff', padding: '30px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
+        <div style={{ width: '100%', maxWidth: '600px', backgroundColor: '#ffffff', padding: '30px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
           <h1 style={{ textAlign: 'center', color: '#1a365d', marginBottom: '30px', fontSize: '1.8em', fontWeight: 600 }}>✈️ 我的旅遊管理大廳</h1>
-          <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '12px', marginBottom: '30px', border: '1px solid #e2e8f0' }}>
+          <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '12px', marginBottom: '30px', border: '1px solid #e2e8f0', boxSizing: 'border-box' }}>
             <h3 style={{ marginTop: 0, color: '#2b6cb0', fontWeight: 600 }}>➕ 建立新行程</h3>
             <form onSubmit={handleCreateTrip} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-              <input type="text" placeholder="行程名稱" value={newTripForm.title} onChange={e => setNewTripForm({ ...newTripForm, title: e.target.value })} required style={{ padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none' }} />
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <input type="date" value={newTripForm.start_date} onChange={e => setNewTripForm({ ...newTripForm, start_date: e.target.value })} required style={{ backgroundColor: '#fff', padding: '12px', flex: 1, borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none' }} />
-                <input type="date" value={newTripForm.end_date} onChange={e => setNewTripForm({ ...newTripForm, end_date: e.target.value })} required style={{ backgroundColor: '#fff', padding: '12px', flex: 1, borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none' }} />
+              <input type="text" placeholder="行程名稱" value={newTripForm.title} onChange={e => setNewTripForm({ ...newTripForm, title: e.target.value })} required style={{ padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', width: '100%' }} />
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <input type="date" value={newTripForm.start_date} onChange={e => setNewTripForm({ ...newTripForm, start_date: e.target.value })} required style={{ backgroundColor: '#fff', padding: '12px', flex: '1 1 120px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                <input type="date" value={newTripForm.end_date} onChange={e => setNewTripForm({ ...newTripForm, end_date: e.target.value })} required style={{ backgroundColor: '#fff', padding: '12px', flex: '1 1 120px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
               </div>
-              <button type="submit" style={{ padding: '12px', backgroundColor: '#3182ce', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>新增行程</button>
+              <button type="submit" style={{ padding: '12px', backgroundColor: '#3182ce', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>新增行程</button>
             </form>
           </div>
           {trips.map(trip => (
-            <div key={trip.id} onClick={() => selectTrip(trip)} style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', marginBottom: '15px', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+            <div key={trip.id} onClick={() => selectTrip(trip)} style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', marginBottom: '15px', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.02)', boxSizing: 'border-box' }}>
               <div><strong style={{ fontSize: '1.2em', color: '#2d3748' }}>{trip.title}</strong><br /><small style={{ color: '#718096' }}>📅 {trip.start_date} ~ {trip.end_date}</small></div>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={(e) => startEditingLobbyTrip(trip, e)} style={{ background: 'none', border: 'none', fontSize: '1.2em', cursor: 'pointer', outline: 'none' }}>✏️</button>
-                <button onClick={(e) => handleDeleteTrip(trip.id, e)} style={{ background: 'none', border: 'none', fontSize: '1.2em', color: '#fc8181', cursor: 'pointer', outline: 'none' }}>🗑️</button>
+              <div style={{ display: 'flex', gap: '2px' }}>
+                <button onClick={(e) => startEditingLobbyTrip(trip, e)} style={{ background: 'none', border: 'none', fontSize: '0.9rem', cursor: 'pointer', outline: 'none', padding: '10px' }}>✏️</button>
+                <button onClick={(e) => handleDeleteTrip(trip.id, e)} style={{ background: 'none', border: 'none', fontSize: '0.9rem', color: '#fc8181', cursor: 'pointer', outline: 'none', padding: '10px' }}>🗑️</button>
               </div>
             </div>
           ))}
@@ -156,7 +157,7 @@ function App() {
     )
   }
 
-  // ================= 渲染：看板項目 =================
+  // ====== 渲染：看板 ======
   const renderDayColumn = (day, title = null) => {
     const dayItems = items.filter(item => item.day_number === day).sort((a, b) => a.order_index - b.order_index);
     const isWishlist = day === 0;
@@ -178,41 +179,43 @@ function App() {
                 return (
                   <Draggable key={item.id} draggableId={item.id} index={index}>
                     {(p, s) => (
-                      <div ref={p.innerRef} {...p.draggableProps} {...p.dragHandleProps} 
-                        style={{ 
-                          userSelect: 'none', padding: '16px', margin: '0 0 10px 0', backgroundColor: '#ffffff', borderRadius: '10px', 
-                          boxShadow: s.isDragging ? '0 10px 25px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.05)', 
-                          borderLeft: `6px solid ${cat.color}`, ...p.draggableProps.style 
+                      <div ref={p.innerRef} {...p.draggableProps} {...p.dragHandleProps}
+                        style={{
+                          userSelect: 'none', padding: '16px', margin: '0 0 10px 0', backgroundColor: '#ffffff', borderRadius: '10px',
+                          boxShadow: s.isDragging ? '0 10px 25px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.05)',
+                          borderLeft: `6px solid ${cat.color}`, boxSizing: 'border-box', ...p.draggableProps.style
                         }}>
                         {editingItemId === item.id ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                              <select value={editItemForm.category || '景點'} onChange={e => setEditItemForm({ ...editItemForm, category: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
-                              <input type="time" value={editItemForm.start_time || ''} onChange={e => setEditItemForm({ ...editItemForm, start_time: e.target.value })} style={{ backgroundColor: '#fff', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none' }} />
-                              <input type="text" value={editItemForm.content} onChange={e => setEditItemForm({ ...editItemForm, content: e.target.value })} placeholder="景點名稱" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none' }} />
+                              <select value={editItemForm.category || '景點'} onChange={e => setEditItemForm({ ...editItemForm, category: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
+                              <input type="time" value={editItemForm.start_time || ''} onChange={e => setEditItemForm({ ...editItemForm, start_time: e.target.value })} style={{ backgroundColor: '#fff', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                              <input type="text" value={editItemForm.content} onChange={e => setEditItemForm({ ...editItemForm, content: e.target.value })} placeholder="景點名稱" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                             </div>
-                            <input type="url" value={editItemForm.map_url || ''} onChange={e => setEditItemForm({ ...editItemForm, map_url: e.target.value })} placeholder="Google Map 連結" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', outline: 'none' }} />
-                            <textarea value={editItemForm.memo || ''} onChange={e => setEditItemForm({ ...editItemForm, memo: e.target.value })} placeholder="備註事項" rows="2" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', resize: 'vertical', outline: 'none' }} />
+                            <input type="url" value={editItemForm.map_url || ''} onChange={e => setEditItemForm({ ...editItemForm, map_url: e.target.value })} placeholder="Google Map 連結" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', outline: 'none', fontSize: '16px' }} />
+                            <textarea value={editItemForm.memo || ''} onChange={e => setEditItemForm({ ...editItemForm, memo: e.target.value })} placeholder="備註事項" rows="2" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', resize: 'vertical', outline: 'none', fontSize: '16px' }} />
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                              <button onClick={() => setEditingItemId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer', outline: 'none' }}>取消</button>
-                              <button onClick={saveEditedItem} style={{ padding: '6px 12px', border: 'none', background: '#3182ce', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, outline: 'none' }}>儲存</button>
+                              <button onClick={() => setEditingItemId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '15px' }}>取消</button>
+                              <button onClick={saveEditedItem} style={{ padding: '6px 12px', border: 'none', background: '#3182ce', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '15px' }}>儲存</button>
                             </div>
                           </div>
                         ) : (
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: '1.2em' }}>{cat.icon}</span>
-                              {item.start_time && <span style={{ fontSize: '0.85em', fontWeight: 600, background: '#f0f4f8', color: '#4a5568', padding: '2px 6px', borderRadius: '4px' }}>{item.start_time}</span>}
-                              <strong style={{ fontSize: '1.1em', color: '#2d3748', wordBreak: 'break-word', fontWeight: 600 }}>{item.content}</strong>
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '1.2em' }} title={cat.name}>{cat.icon}</span>
+                                {item.start_time && <span style={{ fontSize: '0.85em', fontWeight: 600, background: '#f0f4f8', color: '#4a5568', padding: '2px 6px', borderRadius: '4px' }}>{item.start_time}</span>}
+                                <strong style={{ fontSize: '1.1em', color: '#2d3748', wordBreak: 'break-word', fontWeight: 600 }}>{item.content}</strong>
+                              </div>
+                              <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                                {item.map_url && <a href={item.map_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '0.9rem', padding: '10px' }}>📍</a>}
+                                <button onClick={() => { setEditingItemId(item.id); setEditItemForm(item) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem', outline: 'none', padding: '10px' }}>✏️</button>
+                                <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', fontSize: '0.9rem', outline: 'none', padding: '10px' }}>🗑️</button>
+                              </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '10px' }}>
-                              {item.map_url && <a href={item.map_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '1.1em' }}>📍</a>}
-                              <button onClick={() => { setEditingItemId(item.id); setEditItemForm(item) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1em', outline: 'none' }}>✏️</button>
-                              <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', fontSize: '1.1em', outline: 'none' }}>🗑️</button>
-                            </div>
-                          </div>
+                            {item.memo && <div style={{ marginTop: '10px', marginLeft: '35px', padding: '10px', backgroundColor: '#fcfaf2', borderLeft: '4px solid #f6e05e', borderRadius: '4px', fontSize: '0.9em', color: '#555', whiteSpace: 'pre-wrap' }}>{item.memo}</div>}
+                          </>
                         )}
-                        {!editingItemId && item.memo && <div style={{ marginTop: '10px', marginLeft: '30px', padding: '10px', backgroundColor: '#fcfaf2', borderLeft: '4px solid #f6e05e', borderRadius: '4px', fontSize: '0.9em', color: '#555', whiteSpace: 'pre-wrap' }}>{item.memo}</div>}
                       </div>
                     )}
                   </Draggable>
@@ -226,11 +229,14 @@ function App() {
     )
   }
 
+  // ====== 整個版面渲染 ======
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', fontFamily: '"Segoe UI", sans-serif' }}>
-      <div style={{ backgroundColor: '#ffffff', padding: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10 }}>
+
+      {/* 頂部選單 */}
+      <div style={{ backgroundColor: '#ffffff', padding: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10, boxSizing: 'border-box' }}>
         <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-          <button onClick={() => setCurrentTrip(null)} style={{ padding: '8px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', fontWeight: 600, cursor: 'pointer', outline: 'none', color: '#4a5568' }}>🔙 大廳</button>
+          <button onClick={() => setCurrentTrip(null)} style={{ padding: '8px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', fontWeight: 600, cursor: 'pointer', outline: 'none', color: '#4a5568', fontSize: '15px' }}>🔙 大廳</button>
           <h1 style={{ margin: 0, color: '#1a365d', fontSize: '1.3em', fontWeight: 600 }}>{currentTrip.title}</h1>
           <div style={{ display: 'flex', gap: '5px' }}>
             <button onClick={() => setActiveTab('itinerary')} style={getTabStyle('itinerary')}>📍 看板</button>
@@ -240,19 +246,20 @@ function App() {
         </div>
       </div>
 
-      <div style={{ padding: '20px 15px', maxWidth: '800px', margin: '0 auto' }}>
+      <div style={{ padding: '20px 15px', maxWidth: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
+
         {/* --- 看板分頁 --- */}
         {activeTab === 'itinerary' && (
           <>
-            <form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px', backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
+            <form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px', backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                <select value={selectedDay} onChange={e => setSelectedDay(Number(e.target.value))} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: 600, color: '#2d3748', backgroundColor: '#f8fafc', flex: '1 1 100px', outline: 'none' }}><option value={0}>✨ 願望清單</option>{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>第 {day} 天</option>))}</select>
-                <select value={newItemForm.category} onChange={e => setNewItemForm({ ...newItemForm, category: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
-                <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 10px', flex: '1 1 120px' }}><span>🕒</span><input type="time" value={newItemForm.start_time} onChange={e => setNewItemForm({ ...newItemForm, start_time: e.target.value })} style={{ border: 'none', outline: 'none', padding: '12px 5px', width: '100%', backgroundColor: 'transparent' }} /></div>
-                <input type="text" placeholder="想去的景點..." value={newItemForm.content} onChange={e => setNewItemForm({ ...newItemForm, content: e.target.value })} required style={{ flex: '3 1 150px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} />
+                <select value={selectedDay} onChange={e => setSelectedDay(Number(e.target.value))} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: 600, color: '#2d3748', backgroundColor: '#f8fafc', flex: '1 1 100px', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}><option value={0}>✨ 願望清單</option>{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>第 {day} 天</option>))}</select>
+                <select value={newItemForm.category} onChange={e => setNewItemForm({ ...newItemForm, category: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', flex: '1 1 100px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
+                <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 10px', flex: '1 1 120px', boxSizing: 'border-box' }}><span>🕒</span><input type="time" value={newItemForm.start_time} onChange={e => setNewItemForm({ ...newItemForm, start_time: e.target.value })} style={{ border: 'none', outline: 'none', padding: '12px 5px', width: '100%', backgroundColor: 'transparent', fontSize: '16px', boxSizing: 'border-box' }} /></div>
               </div>
-              <input type="url" placeholder="Google Map 連結 (選填)" value={newItemForm.map_url} onChange={e => setNewItemForm({ ...newItemForm, map_url: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} />
-              <button type="submit" style={{ padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>＋ 加入</button>
+              <input type="text" placeholder="想去的景點..." value={newItemForm.content} onChange={e => setNewItemForm({ ...newItemForm, content: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+              <input type="url" placeholder="Google Map 連結 (選填)" value={newItemForm.map_url} onChange={e => setNewItemForm({ ...newItemForm, map_url: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+              <button type="submit" style={{ padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>＋ 加入</button>
             </form>
             <DragDropContext onDragEnd={onDragEnd}><div style={{ display: 'flex', flexDirection: 'column' }}>{renderDayColumn(0, '✨ 願望清單')}{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => renderDayColumn(day))}</div></DragDropContext>
           </>
@@ -260,49 +267,110 @@ function App() {
 
         {/* --- 購物分頁 --- */}
         {activeTab === 'shopping' && (
-          <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
+          <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             <h2 style={{ color: '#2c7a7b', marginTop: 0, fontWeight: 600 }}>🛒 購物清單</h2>
-            <form onSubmit={handleAddShop} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '25px', background: '#f0f9ff', padding: '20px', borderRadius: '12px', border: '1px solid #bae3ff' }}>
-              <input type="text" placeholder="想買什麼？ (如: 防曬乳)" value={newShopForm.name} onChange={e => setNewShopForm({ ...newShopForm, name: e.target.value })} required style={{ padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none' }} />
-              <input type="text" placeholder="哪裡買？ (如: 機場免稅店)" value={newShopForm.location} onChange={e => setNewShopForm({ ...newShopForm, location: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none' }} />
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <label htmlFor="shop-upload" style={{ flex: 1, padding: '12px', backgroundColor: '#fff', borderRadius: '8px', border: '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '0.9em', color: '#4a5568', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🖼️ 選擇商品圖片</label>
+            <form onSubmit={handleAddShop} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '25px', background: '#f0f9ff', padding: '20px', borderRadius: '12px', border: '1px solid #bae3ff', boxSizing: 'border-box' }}>
+              <input type="text" placeholder="想買什麼？ (如: 防曬乳)" value={newShopForm.name} onChange={e => setNewShopForm({ ...newShopForm, name: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+              <input type="text" placeholder="哪裡買？ (如: 機場免稅店)" value={newShopForm.location} onChange={e => setNewShopForm({ ...newShopForm, location: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <label htmlFor="shop-upload" style={{ flex: '1 1 120px', padding: '12px', backgroundColor: newShopForm.item_image ? '#ebf8ff' : '#fff', color: newShopForm.item_image ? '#2b6cb0' : '#4a5568', borderRadius: '8px', border: newShopForm.item_image ? '1px solid #3182ce' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', boxSizing: 'border-box' }}>
+                  {newShopForm.item_image ? '✅ 已選圖片' : '🖼️ 選相片'}
+                </label>
                 <input id="shop-upload" type="file" accept="image/*" onChange={e => setNewShopForm({ ...newShopForm, item_image: e.target.files[0] })} style={{ display: 'none' }} />
-                <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>＋ 新增</button>
+                <button type="submit" style={{ flex: '1 1 120px', padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, outline: 'none', cursor: 'pointer', fontSize: '16px', boxSizing: 'border-box' }}>＋ 新增</button>
               </div>
             </form>
+
             <ul style={{ listStyle: 'none', padding: 0 }}>
               {Array.isArray(shoppingItems) && shoppingItems.map(item => (
-                <li key={item.id} style={{ display: 'flex', alignItems: 'center', backgroundColor: '#f8fafc', padding: '15px', marginBottom: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', opacity: item.is_bought ? 0.6 : 1 }}>
-                  <input type="checkbox" checked={item.is_bought} onChange={() => toggleBoughtStatus(item)} style={{ width: '22px', height: '22px', marginRight: '15px', cursor: 'pointer' }} />
-                  {item.image_url && <a href={item.image_url} target="_blank" rel="noopener noreferrer"><img src={item.image_url} alt="商品" style={{ width: '50px', height: '50px', borderRadius: '6px', objectFit: 'cover', marginRight: '15px' }} /></a>}
-                  <div style={{ flex: 1, textDecoration: item.is_bought ? 'line-through' : 'none' }}><strong>{item.name}</strong><br /><span style={{ fontSize: '0.85em', color: '#718096' }}>📍 {item.location}</span></div>
-                  <button onClick={() => deleteShopItem(item.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', outline: 'none' }}>🗑️</button>
+                <li key={item.id} style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '15px', marginBottom: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', opacity: item.is_bought ? 0.6 : 1, boxSizing: 'border-box' }}>
+                  {editingShopId === item.id ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
+                      <input type="text" value={editShopForm.name} onChange={e => setEditShopForm({ ...editShopForm, name: e.target.value })} required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                      <input type="text" value={editShopForm.location} onChange={e => setEditShopForm({ ...editShopForm, location: e.target.value })} placeholder="哪裡買？" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                        <button onClick={() => setEditingShopId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer', fontSize: '15px' }}>取消</button>
+                        <button onClick={saveEditedShop} style={{ padding: '6px 12px', border: 'none', background: '#319795', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '15px' }}>儲存</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                        <input type="checkbox" checked={item.is_bought} onChange={() => toggleBoughtStatus(item)} style={{ width: '22px', height: '22px', cursor: 'pointer', accentColor: '#38b2ac', flexShrink: 0 }} />
+                        {item.image_url && (
+                          <a href={item.image_url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0 }}>
+                            <img src={item.image_url} alt="商品" style={{ width: '50px', height: '50px', borderRadius: '6px', objectFit: 'cover', border: '1px solid #ddd' }} />
+                          </a>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0, textDecoration: item.is_bought ? 'line-through' : 'none' }}>
+                          <strong style={{ display: 'block', color: '#2d3748', fontSize: '1.05em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</strong>
+                          {item.location && <span style={{ fontSize: '0.85em', color: '#718096', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📍 {item.location}</span>}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                        {/* 💡 修復：加回購物清單的編輯與縮小圖示 */}
+                        <button onClick={() => { setEditingShopId(item.id); setEditShopForm(item); }} style={{ background: 'none', border: 'none', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>✏️</button>
+                        <button onClick={() => deleteShopItem(item.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>🗑️</button>
+                      </div>
+                    </div>
+                  )}
                 </li>
               ))}
+              {shoppingItems.length === 0 && <div style={{ textAlign: 'center', color: '#a0aec0', padding: '20px 0' }}>清單空空的，快點新增想買的酷東西！</div>}
             </ul>
           </div>
         )}
 
-        {/* --- 記帳分頁 (含防崩潰) --- */}
+        {/* --- 記帳分頁 (完美防擠壓修復) --- */}
         {activeTab === 'expenses' && (
-          <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)' }}>
+          <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0, color: '#c53030', fontWeight: 600 }}>目前總花費</h2>
               <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e' }}>{totalExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>JPY</span></span>
             </div>
-            <form onSubmit={handleAddExpense} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '30px', background: '#fffaf0', padding: '20px', borderRadius: '12px', border: '1px solid #f6e05e' }}>
-              <div style={{ display: 'flex', gap: '10px' }}><input type="number" placeholder="金額" value={newExpense.amount} required onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} /><select value={newExpense.category} onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff' }}><option value="飲食">🍔 飲食</option><option value="交通">🚗 交通</option><option value="購物">🛍️ 購物</option><option value="住宿">🛏️ 住宿</option><option value="其他">❓ 其他</option></select></div>
-              <input type="text" placeholder="描述" value={newExpense.description} onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none' }} />
-              <div style={{ display: 'flex', gap: '10px' }}><label htmlFor="receipt-upload" style={{ flex: 1, padding: '12px', backgroundColor: '#fff', borderRadius: '8px', border: '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600 }}>📸 拍照收據</label><input id="receipt-upload" type="file" accept="image/*" capture="environment" onChange={e => setNewExpense({ ...newExpense, receipt_image: e.target.files[0] })} style={{ display: 'none' }} /><button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#f56565', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', outline: 'none' }}>＋ 記一筆</button></div>
+
+            <form onSubmit={handleAddExpense} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '30px', background: '#fffaf0', padding: '20px', borderRadius: '12px', border: '1px solid #f6e05e', boxSizing: 'border-box' }}>
+              {/* 💡 完美的 Flex Wrap 排版，保護所有輸入框不超出邊界 */}
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <input type="number" placeholder="金額 (JPY)" value={newExpense.amount} required onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                <select value={newExpense.category} onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', boxSizing: 'border-box' }}>
+                  <option value="飲食">🍔 飲食</option><option value="交通">🚗 交通</option><option value="購物">🛍️ 購物</option><option value="住宿">🛏️ 住宿</option><option value="其他">❓ 其他</option>
+                </select>
+              </div>
+              <input type="text" placeholder="消費明細" value={newExpense.description} onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', width: '100%', boxSizing: 'border-box' }} />
+
+              {/* 💡 加回：不小心被刪掉的「關聯景點」下拉選單 */}
+              <select value={newExpense.itemId} onChange={(e) => setNewExpense({ ...newExpense, itemId: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', width: '100%', boxSizing: 'border-box' }}>
+                <option value="">-- 不指定行程景點 --</option>
+                {items.filter(i => i.day_number !== 0).map(item => (<option key={item.id} value={item.id}>Day {item.day_number} - {item.content}</option>))}
+              </select>
+
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <label htmlFor="receipt-upload" style={{ flex: '1 1 120px', padding: '12px', backgroundColor: newExpense.receipt_image ? '#e6fffa' : '#fff', color: newExpense.receipt_image ? '#276749' : '#4a5568', borderRadius: '8px', border: newExpense.receipt_image ? '1px solid #38a169' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>
+                  {newExpense.receipt_image ? '✅ 已附照片' : '📸 拍照收據'}
+                </label>
+                <input id="receipt-upload" type="file" accept="image/*" capture="environment" onChange={e => setNewExpense({ ...newExpense, receipt_image: e.target.files[0] })} style={{ display: 'none' }} />
+                <button type="submit" style={{ flex: '1 1 120px', padding: '12px', backgroundColor: '#f56565', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}>＋ 記一筆</button>
+              </div>
             </form>
+
             <ul style={{ listStyle: 'none', padding: 0 }}>
-              {Array.isArray(expenses) && expenses.map(exp => (
-                <li key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '15px', borderBottom: '1px solid #eee' }}>
-                  <div><strong style={{ color: '#2d3748' }}>{exp.category}</strong> - <span style={{ color: '#4a5568' }}>{exp.description}</span></div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>{exp.image_url && <a href={exp.image_url} target="_blank" rel="noopener noreferrer">🖼️</a>}<strong>{Number(exp.amount).toLocaleString()} JPY</strong><button onClick={() => deleteExpense(exp.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', outline: 'none' }}>🗑️</button></div>
-                </li>
-              ))}
+              {Array.isArray(expenses) && expenses.map(exp => {
+                const relatedItem = items.filter(i => i.id === Number(exp.itemId))[0] || items.find(i => i.id === String(exp.itemId));
+                return (
+                  <li key={exp.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px', borderBottom: '1px solid #eee', gap: '10px', boxSizing: 'border-box' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <strong style={{ color: '#2d3748' }}>{exp.category}</strong> - <span style={{ color: '#4a5568' }}>{exp.description}</span>
+                      {relatedItem && <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📍 Day {relatedItem.day_number} - {relatedItem.content}</div>}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                      {exp.image_url && <a href={exp.image_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '0.9rem', padding: '10px' }}>🖼️</a>}
+                      <strong style={{ color: '#e53e3e', margin: '0 5px', fontSize: '1.1em' }}>{Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.7em' }}>JPY</span></strong>
+                      <button onClick={() => deleteExpense(exp.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>🗑️</button>
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           </div>
         )}
