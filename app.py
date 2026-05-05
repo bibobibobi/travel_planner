@@ -5,6 +5,8 @@ from datetime import datetime
 import os
 from werkzeug.utils import secure_filename
 import json
+from dotenv import load_dotenv
+load_dotenv()
 
 # 新增的 AI 與圖片處理套件
 import google.generativeai as genai
@@ -12,7 +14,7 @@ from PIL import Image
 import io
 
 # 💡 填入你的 Gemini API 金鑰
-genai.configure(api_key="AIzaSyAcwz8V8WLpDEfzkhqmZOiPjQp4jOimLd8")
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://travel_user:travel123@localhost/travel_db'
