@@ -21,7 +21,6 @@ const EXPENSE_CATEGORIES = [
   { name: '其他', icon: '❓' }
 ];
 
-// 💡 新增：支援的常用幣別選單
 const CURRENCY_OPTIONS = [
   { code: 'JPY', label: 'JPY (日圓)' },
   { code: 'KRW', label: 'KRW (韓元)' },
@@ -55,17 +54,17 @@ function App() {
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null })
   const [isScanning, setIsScanning] = useState(false)
 
-  // 💡 匯率狀態
+  // 💡 點擊展開商品價格的狀態記憶
+  const [expandedPrices, setExpandedPrices] = useState({});
+
   const [exchangeRate, setExchangeRate] = useState(() => {
     return parseFloat(localStorage.getItem('travelExchangeRate')) || 0.215;
   });
 
-  // 💡 幣別狀態 (預設 JPY)
   const [baseCurrency, setBaseCurrency] = useState(() => {
     return localStorage.getItem('travelBaseCurrency') || 'JPY';
   });
 
-  // 當匯率或幣別改變時，自動存回瀏覽器
   useEffect(() => {
     localStorage.setItem('travelExchangeRate', exchangeRate);
   }, [exchangeRate]);
@@ -197,34 +196,57 @@ function App() {
     border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '16px'
   });
 
-  // 💡 智能解析明細：將長串文字拆分為「店名」與「水平滑動的商品標籤」
-  const renderSmartDescription = (desc) => {
+  const togglePriceDisplay = (expId) => {
+    setExpandedPrices(prev => ({ ...prev, [expId]: !prev[expId] }));
+  };
+
+  // 💡 智能解析明細：結合提取價格與水平滑動
+  const renderSmartDescription = (desc, expId) => {
     if (!desc) return <span style={{ color: '#a0aec0', fontSize: '0.95em' }}>無明細</span>;
 
-    // 檢查是否符合 AI 生成的 "店名 - 商品A、商品B" 格式
     if (desc.includes(' - ')) {
       const [storeName, itemsString] = desc.split(' - ');
       const productList = itemsString.split('、');
+      const showPrice = expandedPrices[expId]; // 判斷這筆帳是否被點擊展開
 
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '2px', maxWidth: '100%' }}>
           <strong style={{ color: '#4a5568', fontSize: '0.95em', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            🏪 {storeName.replace(/【|】/g, '')} {/* 移除可能出現的括號 */}
+            🏪 {storeName.replace(/【|】/g, '')}
           </strong>
 
-          {/* 水平滑動的標籤容器 */}
-          <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px', WebkitOverflowScrolling: 'touch' }}>
-            {productList.map((product, idx) => (
-              <span key={idx} style={{ flexShrink: 0, backgroundColor: '#edf2f7', color: '#4a5568', padding: '4px 10px', borderRadius: '16px', fontSize: '0.85em', whiteSpace: 'nowrap', border: '1px solid #e2e8f0' }}>
-                {product}
-              </span>
-            ))}
+          {/* 點擊切換價格顯示 */}
+          <div
+            onClick={() => togglePriceDisplay(expId)}
+            style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px', WebkitOverflowScrolling: 'touch', cursor: 'pointer' }}
+            title="點擊查看單價"
+          >
+            {productList.map((productStr, idx) => {
+              // 解析 AI 回傳的 "商品:15000" 格式
+              const parts = productStr.split(':');
+              const name = parts[0];
+              const price = parts.length > 1 ? parts[1] : null;
+
+              return (
+                <span key={idx} style={{ flexShrink: 0, backgroundColor: '#edf2f7', color: '#4a5568', padding: '4px 10px', borderRadius: '16px', fontSize: '0.85em', whiteSpace: 'nowrap', border: '1px solid #e2e8f0', transition: 'all 0.2s ease' }}>
+                  {name}
+                  {/* 若有展開且有價格，則顯示價格 */}
+                  {showPrice && price && (
+                    <strong style={{ color: '#e53e3e', marginLeft: '6px' }}>${price}</strong>
+                  )}
+                </span>
+              )
+            })}
           </div>
+          {!showPrice && productList.some(p => p.includes(':')) && (
+            <div style={{ fontSize: '0.75em', color: '#a0aec0', marginTop: '-4px', fontStyle: 'italic' }}>
+              👆 點擊標籤展開單價
+            </div>
+          )}
         </div>
       );
     }
 
-    // 若為手動輸入的一般字串，則允許多行顯示不截斷
     return (
       <div style={{ color: '#4a5568', fontSize: '0.95em', wordBreak: 'break-word', whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>
         {desc}
@@ -405,36 +427,33 @@ function App() {
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
 
-            {/* 💡 總花費與動態幣別匯率設定區塊 */}
-            <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h2 style={{ margin: 0, color: '#c53030', fontWeight: 600 }}>目前總花費</h2>
+            {/* 💡 1. 總花費區塊：優化 Grid 排版解決破版問題 */}
+            <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', flexWrap: 'wrap', gap: '15px', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ flex: '1 1 min-content' }}>
+                <h2 style={{ margin: '0 0 12px 0', color: '#c53030', fontWeight: 600, whiteSpace: 'nowrap' }}>目前總花費</h2>
 
-                {/* 💡 新增的幣別選擇器 */}
-                <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  幣別：
-                  <select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} style={{ padding: '2px 4px', borderRadius: '4px', border: '1px solid #cbd5e0', outline: 'none', backgroundColor: '#fff', fontSize: '1em', cursor: 'pointer' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '8px 6px', alignItems: 'center', fontSize: '0.9em', color: '#718096' }}>
+                  <span style={{ textAlign: 'right', fontWeight: 600 }}>幣別：</span>
+                  <select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} style={{ padding: '6px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', backgroundColor: '#fff', width: '120px', fontSize: '1em', cursor: 'pointer' }}>
                     {CURRENCY_OPTIONS.map(cur => (
                       <option key={cur.code} value={cur.code}>{cur.label}</option>
                     ))}
                   </select>
-                </div>
 
-                <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  匯率：<input type="number" step="0.001" value={exchangeRate} onChange={e => setExchangeRate(e.target.value)} style={{ width: '65px', padding: '2px 4px', borderRadius: '4px', border: '1px solid #cbd5e0', fontSize: '1em', outline: 'none' }} />
+                  <span style={{ textAlign: 'right', fontWeight: 600 }}>匯率：</span>
+                  <input type="number" step="0.001" value={exchangeRate} onChange={e => setExchangeRate(e.target.value)} style={{ padding: '6px', borderRadius: '6px', border: '1px solid #cbd5e0', fontSize: '1em', outline: 'none', width: '90px' }} />
                 </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e', display: 'block' }}>
+              <div style={{ textAlign: 'right', flex: '0 0 auto' }}>
+                <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e', display: 'block', lineHeight: '1.2' }}>
                   {totalExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>{baseCurrency}</span>
                 </span>
-                <span style={{ fontSize: '1em', color: '#718096', fontWeight: 500, display: 'block', marginTop: '-2px' }}>
+                <span style={{ fontSize: '1em', color: '#718096', fontWeight: 500, display: 'block', marginTop: '4px' }}>
                   ≈ {Math.round(totalExpense * exchangeRate).toLocaleString()} TWD
                 </span>
               </div>
             </div>
 
-            {/* 💡 分類總計也加上了台幣換算 */}
             {Object.keys(categoryTotals).length > 0 && (
               <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '20px', WebkitOverflowScrolling: 'touch' }}>
                 {EXPENSE_CATEGORIES.map(cat => {
@@ -463,7 +482,6 @@ function App() {
 
             <form onSubmit={handleAddExpense} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '30px', background: '#fffaf0', padding: '20px', borderRadius: '12px', border: '1px solid #f6e05e', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                {/* 💡 這裡的金額 Placeholder 也動態切換了 */}
                 <input type="number" placeholder={`金額 (${baseCurrency})`} value={newExpense.amount} required onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                 <select value={newExpense.category} onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', boxSizing: 'border-box' }}>{EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
               </div>
@@ -499,8 +517,8 @@ function App() {
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
                           <strong style={{ color: '#2d3748', fontSize: '1.05em', marginBottom: '4px' }}>{exp.category}</strong>
 
-                          {/* 💡 智慧解析明細，支援水平滑動不截斷 */}
-                          {renderSmartDescription(exp.description)}
+                          {/* 💡 3. 解析器調用：傳入 exp.id 讓點擊可以展開顯示價格 */}
+                          {renderSmartDescription(exp.description, exp.id)}
 
                           {relatedItem && <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '6px' }}>📍 Day {relatedItem.day_number} - {relatedItem.content}</div>}
                         </div>
