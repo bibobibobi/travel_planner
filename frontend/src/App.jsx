@@ -21,6 +21,17 @@ const EXPENSE_CATEGORIES = [
   { name: '其他', icon: '❓' }
 ];
 
+// 💡 新增：支援的常用幣別選單
+const CURRENCY_OPTIONS = [
+  { code: 'JPY', label: 'JPY (日圓)' },
+  { code: 'KRW', label: 'KRW (韓元)' },
+  { code: 'THB', label: 'THB (泰銖)' },
+  { code: 'USD', label: 'USD (美元)' },
+  { code: 'EUR', label: 'EUR (歐元)' },
+  { code: 'VND', label: 'VND (越南盾)' },
+  { code: 'TWD', label: 'TWD (台幣)' },
+];
+
 function App() {
   const [trips, setTrips] = useState([])
   const [currentTrip, setCurrentTrip] = useState(null)
@@ -37,22 +48,30 @@ function App() {
   const [newShopForm, setNewShopForm] = useState({ name: '', location: '', item_image: null })
   const [editingShopId, setEditingShopId] = useState(null)
   const [editShopForm, setEditShopForm] = useState({})
-  
+
   const [expenses, setExpenses] = useState([])
   const [editingExpenseId, setEditingExpenseId] = useState(null)
   const [editExpenseForm, setEditExpenseForm] = useState({})
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null })
   const [isScanning, setIsScanning] = useState(false)
 
-  // 💡 匯率狀態，預設從瀏覽器記憶抓取，沒有的話預設 0.215
+  // 💡 匯率狀態
   const [exchangeRate, setExchangeRate] = useState(() => {
     return parseFloat(localStorage.getItem('travelExchangeRate')) || 0.215;
   });
 
-  // 當匯率改變時，自動存回瀏覽器
+  // 💡 幣別狀態 (預設 JPY)
+  const [baseCurrency, setBaseCurrency] = useState(() => {
+    return localStorage.getItem('travelBaseCurrency') || 'JPY';
+  });
+
+  // 當匯率或幣別改變時，自動存回瀏覽器
   useEffect(() => {
     localStorage.setItem('travelExchangeRate', exchangeRate);
   }, [exchangeRate]);
+  useEffect(() => {
+    localStorage.setItem('travelBaseCurrency', baseCurrency);
+  }, [baseCurrency]);
 
   const getTripDays = (start, end) => {
     const d1 = new Date(start); const d2 = new Date(end);
@@ -141,14 +160,14 @@ function App() {
     if (newExpense.receipt_image) { const compressed = await compressImage(newExpense.receipt_image); formData.append('receipt_image', compressed); }
     fetch(`${API_BASE}/expenses`, { method: 'POST', body: formData }).then(() => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', itemId: '', receipt_image: null }); document.getElementById('receipt-upload').value = ''; })
   }
-  
+
   const saveEditedExpense = () => {
     fetch(`${API_BASE}/expenses/${editingExpenseId}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(editExpenseForm)
     }).then(() => { fetchExpenses(currentTrip.id); setEditingExpenseId(null); });
   }
-  
+
   const deleteExpense = (id) => { if (window.confirm("確定刪除這筆花費？")) { fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE' }).then(() => fetchExpenses(currentTrip.id)) } }
 
   const onDragEnd = (result) => {
@@ -177,6 +196,41 @@ function App() {
     color: activeTab === tabName ? (tabName === 'itinerary' ? '#319795' : tabName === 'shopping' ? '#2b6cb0' : '#e53e3e') : '#718096',
     border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '16px'
   });
+
+  // 💡 智能解析明細：將長串文字拆分為「店名」與「水平滑動的商品標籤」
+  const renderSmartDescription = (desc) => {
+    if (!desc) return <span style={{ color: '#a0aec0', fontSize: '0.95em' }}>無明細</span>;
+
+    // 檢查是否符合 AI 生成的 "店名 - 商品A、商品B" 格式
+    if (desc.includes(' - ')) {
+      const [storeName, itemsString] = desc.split(' - ');
+      const productList = itemsString.split('、');
+
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '2px', maxWidth: '100%' }}>
+          <strong style={{ color: '#4a5568', fontSize: '0.95em', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            🏪 {storeName.replace(/【|】/g, '')} {/* 移除可能出現的括號 */}
+          </strong>
+
+          {/* 水平滑動的標籤容器 */}
+          <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px', WebkitOverflowScrolling: 'touch' }}>
+            {productList.map((product, idx) => (
+              <span key={idx} style={{ flexShrink: 0, backgroundColor: '#edf2f7', color: '#4a5568', padding: '4px 10px', borderRadius: '16px', fontSize: '0.85em', whiteSpace: 'nowrap', border: '1px solid #e2e8f0' }}>
+                {product}
+              </span>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // 若為手動輸入的一般字串，則允許多行顯示不截斷
+    return (
+      <div style={{ color: '#4a5568', fontSize: '0.95em', wordBreak: 'break-word', whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>
+        {desc}
+      </div>
+    );
+  };
 
   if (!currentTrip) {
     return (
@@ -289,15 +343,15 @@ function App() {
       <div style={{ padding: '20px 15px', maxWidth: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
         {activeTab === 'itinerary' && (
           <><form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px', backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)', boxSizing: 'border-box' }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                <select value={selectedDay} onChange={e => setSelectedDay(Number(e.target.value))} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: 600, color: '#2d3748', backgroundColor: '#f8fafc', flex: '1 1 100px', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}><option value={0}>✨ 願望清單</option>{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>第 {day} 天</option>))}</select>
-                <select value={newItemForm.category} onChange={e => setNewItemForm({ ...newItemForm, category: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', flex: '1 1 100px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
-                <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 10px', flex: '1 1 120px', boxSizing: 'border-box' }}><span>🕒</span><input type="time" value={newItemForm.start_time} onChange={e => setNewItemForm({ ...newItemForm, start_time: e.target.value })} style={{ border: 'none', outline: 'none', padding: '12px 5px', width: '100%', backgroundColor: 'transparent', fontSize: '16px', boxSizing: 'border-box' }} /></div>
-              </div>
-              <input type="text" placeholder="想去的景點..." value={newItemForm.content} onChange={e => setNewItemForm({ ...newItemForm, content: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-              <input type="url" placeholder="Google Map 連結 (選填)" value={newItemForm.map_url} onChange={e => setNewItemForm({ ...newItemForm, map_url: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-              <button type="submit" style={{ padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>＋ 加入</button>
-            </form><DragDropContext onDragEnd={onDragEnd}><div style={{ display: 'flex', flexDirection: 'column' }}>{renderDayColumn(0, '✨ 願望清單')}{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => renderDayColumn(day))}</div></DragDropContext></>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+              <select value={selectedDay} onChange={e => setSelectedDay(Number(e.target.value))} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: 600, color: '#2d3748', backgroundColor: '#f8fafc', flex: '1 1 100px', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}><option value={0}>✨ 願望清單</option>{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>第 {day} 天</option>))}</select>
+              <select value={newItemForm.category} onChange={e => setNewItemForm({ ...newItemForm, category: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', flex: '1 1 100px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
+              <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 10px', flex: '1 1 120px', boxSizing: 'border-box' }}><span>🕒</span><input type="time" value={newItemForm.start_time} onChange={e => setNewItemForm({ ...newItemForm, start_time: e.target.value })} style={{ border: 'none', outline: 'none', padding: '12px 5px', width: '100%', backgroundColor: 'transparent', fontSize: '16px', boxSizing: 'border-box' }} /></div>
+            </div>
+            <input type="text" placeholder="想去的景點..." value={newItemForm.content} onChange={e => setNewItemForm({ ...newItemForm, content: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+            <input type="url" placeholder="Google Map 連結 (選填)" value={newItemForm.map_url} onChange={e => setNewItemForm({ ...newItemForm, map_url: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+            <button type="submit" style={{ padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>＋ 加入</button>
+          </form><DragDropContext onDragEnd={onDragEnd}><div style={{ display: 'flex', flexDirection: 'column' }}>{renderDayColumn(0, '✨ 願望清單')}{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => renderDayColumn(day))}</div></DragDropContext></>
         )}
 
         {activeTab === 'shopping' && (
@@ -350,43 +404,67 @@ function App() {
         {/* --- 記帳分頁 --- */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
-            
-            {/* 💡 總花費與匯率設定區塊 */}
+
+            {/* 💡 總花費與動態幣別匯率設定區塊 */}
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h2 style={{ margin: 0, color: '#c53030', fontWeight: 600 }}>目前總花費</h2>
+
+                {/* 💡 新增的幣別選擇器 */}
+                <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  幣別：
+                  <select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} style={{ padding: '2px 4px', borderRadius: '4px', border: '1px solid #cbd5e0', outline: 'none', backgroundColor: '#fff', fontSize: '1em', cursor: 'pointer' }}>
+                    {CURRENCY_OPTIONS.map(cur => (
+                      <option key={cur.code} value={cur.code}>{cur.label}</option>
+                    ))}
+                  </select>
+                </div>
+
                 <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                   匯率：<input type="number" step="0.001" value={exchangeRate} onChange={e => setExchangeRate(e.target.value)} style={{ width: '65px', padding: '2px 4px', borderRadius: '4px', border: '1px solid #cbd5e0', fontSize: '1em', outline: 'none' }} />
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e', display: 'block' }}>{totalExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>JPY</span></span>
-                <span style={{ fontSize: '1em', color: '#718096', fontWeight: 500, display: 'block', marginTop: '-2px' }}>≈ {Math.round(totalExpense * exchangeRate).toLocaleString()} TWD</span>
+                <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e', display: 'block' }}>
+                  {totalExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>{baseCurrency}</span>
+                </span>
+                <span style={{ fontSize: '1em', color: '#718096', fontWeight: 500, display: 'block', marginTop: '-2px' }}>
+                  ≈ {Math.round(totalExpense * exchangeRate).toLocaleString()} TWD
+                </span>
               </div>
             </div>
 
+            {/* 💡 分類總計也加上了台幣換算 */}
             {Object.keys(categoryTotals).length > 0 && (
               <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '20px', WebkitOverflowScrolling: 'touch' }}>
                 {EXPENSE_CATEGORIES.map(cat => {
                   if (!categoryTotals[cat.name]) return null;
-                  return (<div key={cat.name} style={{ flex: '0 0 auto', backgroundColor: '#f8fafc', padding: '12px 15px', borderRadius: '10px', border: '1px solid #e2e8f0', minWidth: '100px', boxSizing: 'border-box' }}>
+                  return (
+                    <div key={cat.name} style={{ flex: '0 0 auto', backgroundColor: '#f8fafc', padding: '12px 15px', borderRadius: '10px', border: '1px solid #e2e8f0', minWidth: '100px', boxSizing: 'border-box' }}>
                       <div style={{ fontSize: '0.9em', color: '#718096', marginBottom: '4px', fontWeight: 600 }}>{cat.icon} {cat.name}</div>
-                      <div style={{ fontSize: '1.2em', color: '#2d3748', fontWeight: 600 }}>{categoryTotals[cat.name].toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>JPY</span></div>
-                    </div>)
+                      <div style={{ fontSize: '1.2em', color: '#2d3748', fontWeight: 600 }}>
+                        {categoryTotals[cat.name].toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{baseCurrency}</span>
+                      </div>
+                      <div style={{ fontSize: '0.8em', color: '#a0aec0', marginTop: '2px' }}>
+                        ≈ {Math.round(categoryTotals[cat.name] * exchangeRate).toLocaleString()} TWD
+                      </div>
+                    </div>
+                  )
                 })}
               </div>
             )}
-            
+
             <div style={{ marginBottom: '15px' }}>
               <label style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px', backgroundColor: isScanning ? '#e2e8f0' : '#e6fffa', color: isScanning ? '#718096' : '#234e52', borderRadius: '12px', border: `2px dashed ${isScanning ? '#cbd5e0' : '#319795'}`, cursor: isScanning ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '16px', transition: 'all 0.3s' }}>
                 {isScanning ? '🤖 AI 正在看發票中...' : '✨ AI 自動掃描發票'}
                 <input type="file" accept="image/*" capture="environment" onChange={handleAIScan} disabled={isScanning} style={{ display: 'none' }} />
               </label>
             </div>
-            
+
             <form onSubmit={handleAddExpense} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '30px', background: '#fffaf0', padding: '20px', borderRadius: '12px', border: '1px solid #f6e05e', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <input type="number" placeholder="金額" value={newExpense.amount} required onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                {/* 💡 這裡的金額 Placeholder 也動態切換了 */}
+                <input type="number" placeholder={`金額 (${baseCurrency})`} value={newExpense.amount} required onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                 <select value={newExpense.category} onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })} style={{ flex: '1 1 120px', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', boxSizing: 'border-box' }}>{EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
               </div>
               <input type="text" placeholder="消費明細" value={newExpense.description} onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', width: '100%', boxSizing: 'border-box' }} />
@@ -400,7 +478,7 @@ function App() {
                 <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#f56565', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}>＋ 記一筆</button>
               </div>
             </form>
-            
+
             <ul style={{ listStyle: 'none', padding: 0 }}>
               {Array.isArray(expenses) && expenses.map(exp => {
                 const relatedItem = items.find(i => i.id === String(exp.itemId));
@@ -408,7 +486,7 @@ function App() {
                   <li key={exp.id} style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '15px', marginBottom: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', boxSizing: 'border-box' }}>
                     {editingExpenseId === exp.id ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
-                        <input type="number" value={editExpenseForm.amount} onChange={e => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })} placeholder="金額 (JPY)" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                        <input type="number" value={editExpenseForm.amount} onChange={e => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })} placeholder={`金額 (${baseCurrency})`} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                         <select value={editExpenseForm.category} onChange={e => setEditExpenseForm({ ...editExpenseForm, category: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }}>{EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
                         <input type="text" value={editExpenseForm.description} onChange={e => setEditExpenseForm({ ...editExpenseForm, description: e.target.value })} placeholder="消費明細" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '5px' }}>
@@ -420,23 +498,27 @@ function App() {
                       <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '8px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
                           <strong style={{ color: '#2d3748', fontSize: '1.05em', marginBottom: '4px' }}>{exp.category}</strong>
-                          <span style={{ color: '#4a5568', fontSize: '0.95em', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
-                            {exp.description || '無明細'}
-                          </span>
+
+                          {/* 💡 智慧解析明細，支援水平滑動不截斷 */}
+                          {renderSmartDescription(exp.description)}
+
                           {relatedItem && <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '6px' }}>📍 Day {relatedItem.day_number} - {relatedItem.content}</div>}
                         </div>
-                        
+
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed #e2e8f0', paddingTop: '12px', marginTop: '4px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             {exp.image_url && <a href={exp.image_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '1.1rem', backgroundColor: '#edf2f7', padding: '6px', borderRadius: '6px' }}>🖼️</a>}
-                            
-                            {/* 💡 獨立消費明細匯率換算區塊 */}
+
                             <div style={{ textAlign: 'left' }}>
-                              <strong style={{ color: '#e53e3e', fontSize: '1.2em', display: 'block' }}>{Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>JPY</span></strong>
-                              <span style={{ fontSize: '0.8em', color: '#a0aec0', display: 'block', marginTop: '-2px' }}>≈ {Math.round(Number(exp.amount) * exchangeRate).toLocaleString()} TWD</span>
+                              <strong style={{ color: '#e53e3e', fontSize: '1.2em', display: 'block' }}>
+                                {Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{baseCurrency}</span>
+                              </strong>
+                              <span style={{ fontSize: '0.8em', color: '#a0aec0', display: 'block', marginTop: '-2px' }}>
+                                ≈ {Math.round(Number(exp.amount) * exchangeRate).toLocaleString()} TWD
+                              </span>
                             </div>
                           </div>
-                          
+
                           <div style={{ display: 'flex', gap: '8px' }}>
                             <button onClick={() => { setEditingExpenseId(exp.id); setEditExpenseForm(exp); }} style={{ background: '#edf2f7', border: 'none', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>✏️</button>
                             <button onClick={() => deleteExpense(exp.id)} style={{ background: '#fff5f5', border: 'none', color: '#fc8181', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>🗑️</button>
