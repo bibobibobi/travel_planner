@@ -14,3 +14,5 @@ frontend/dist/
 # 作業系統暫存檔
 .DS_Store
 Thumbs.db
+
+*.env

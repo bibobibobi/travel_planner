@@ -82,7 +82,7 @@ def index():
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# ====== 🤖 核心功能：AI 掃描發票 API ======
+# ====== 🤖 核心功能：AI 掃描發票 API (高精準穩定版) ======
 @app.route('/api/scan-receipt', methods=['POST'])
 def scan_receipt():
     try:
@@ -98,36 +98,45 @@ def scan_receipt():
         # 呼叫 Gemini 模型
         model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
         
-        # 給 AI 的嚴格且聰明的指令 (解除字數限制版)
+        # 給 AI 的嚴格指令 (專治複雜格式與多國語言發票)
         prompt = """
-        你是一個專業的旅遊記帳助手。請看這張發票或收據的照片，並找出以下資訊：
-        1. 最終結帳的「總金額」(只要純數字，排除稅額計算的過程，抓取最終付款總額)。
-        2. 「消費明細」：請先寫出【店家名稱】，接著用破折號加上【代表性的商品清單】(盡量列出完整品項，字數不限)。
-           【翻譯與保留規則】：請以「繁體中文」輸出。但特定的品牌、店名、或日本漢字商品名（如：松本清、唐吉訶德、休足時間、雪肌精等）請「保留原文」不翻譯。一般物品才翻譯。
-           (範例："MEGA 唐吉訶德 - 休足時間、洗面乳、抹茶巧克力、綠茶、塑膠袋")
-        3. 「消費類別」，只能根據這張發票的"主要"屬性，從這五個嚴格選一個：飲食、交通、購物、住宿、其他。
+        你是一個專業的旅遊記帳助手。請分析這張收據照片，提取以下3個資訊：
+        1. "amount": 最終付款「總金額」(請移除千位數逗號，只要純數字字串，例如 "1139")。請特別注意發票上的「合計」、「支払」或折扣後的最終實際支付金額。
+        2. "description": 「消費明細」(格式：【店家名稱】 - 【商品清單】)。請將商品翻譯為繁體中文，但品牌或專有名詞(如 セブン-イレブン, nanaco)保留原文。請將所有品項串接在同一行，絕對「不可使用換行符號」。
+        3. "category": 「消費類別」，只能從 [飲食, 交通, 購物, 住宿, 其他] 中選出一個最主要的屬性。
 
-        請嚴格只回傳 JSON 格式，不要有任何多餘的引言或 markdown 符號。
-        格式範例：
-        {"amount": "5400", "description": "松本清 - 合利他命、雪肌精化妝水、感冒藥、護唇膏、棉花棒", "category": "購物"}
+        請務必遵守：只輸出標準 JSON 格式，不可包含 Markdown 標記，不可包含任何解釋文字。
+        格式範例:{"amount": "5400", "description": "松本清 - 合利他命、雪肌精化妝水、感冒藥、護唇膏、棉花棒", "category": "購物"}
         """
         
-        response = model.generate_content([prompt, image])
-        res_text = response.text.strip()
+        # 💡 殺手鐧：強制模型只能在底層輸出 JSON 格式，徹底杜絕字串解析崩潰
+        response = model.generate_content(
+            [prompt, image],
+            generation_config=genai.types.GenerationConfig(
+                response_mime_type="application/json",
+            )
+        )
         
-        # 清理可能帶有的 Markdown 標記 (Gemini有時會雞婆加上 ```json )
-        if res_text.startswith('```json'):
-            res_text = res_text[7:-3].strip()
-        elif res_text.startswith('```'):
-            res_text = res_text[3:-3].strip()
-            
-        # 轉成 Python 字典並回傳給前端
+        res_text = response.text.strip()
+        print("💡 AI 原始回應:", res_text) # 印出日誌，方便你在伺服器上查看辨識細節
+        
+        # 直接轉成 Python 字典，不再需要手動清理 ```json
         parsed_data = json.loads(res_text)
         return jsonify(parsed_data), 200
 
+    except json.JSONDecodeError as je:
+        print("❌ JSON 解析錯誤:", str(je), "原始文字:", res_text)
+        return jsonify({"error": "AI 回傳格式異常，請重拍一次"}), 500
     except Exception as e:
-        print("AI 辨識錯誤:", str(e))
-        return jsonify({"error": "無法辨識圖片，請手動輸入"}), 500
+        # 💡 強制清除緩衝，印出到伺服器日誌
+        import sys
+        import traceback
+        print("❌ 真實死因:", str(e), flush=True)
+        print(traceback.format_exc(), flush=True)
+        sys.stdout.flush()
+        
+        # 💡 【關鍵】把真正的錯誤訊息直接包成 JSON 傳給前端！
+        return jsonify({"error": f"後端真實錯誤: {str(e)}"}), 500
 
 # --- 其餘既有的 API 路由保持完全不變 ---
 @app.route('/api/trips', methods=['GET', 'POST'])
