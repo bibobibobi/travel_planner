@@ -103,6 +103,7 @@ def scan_receipt():
         {
             "amount": "19153",
             "category": "購物",
+            "date": "2026-02-15",
             "receipt_details": {
                 "store_name": "店家名稱(必須是繁體中文，可保留原本商標名)",
                 "items": [
@@ -119,6 +120,7 @@ def scan_receipt():
         2. discount 若無折扣則填 0。
         3. amount 必須等於折扣後的 final total (純數字)。
         4. category 只能從 [飲食, 交通, 購物, 住宿, 其他] 中選出最符合的一個。
+        5. date 為收據上的消費日期，請一律轉換為 "YYYY-MM-DD" 格式（例如 "2026-02-15"）。若無明確日期請輸出空字串 ""。
         """
         
         response = model.generate_content(

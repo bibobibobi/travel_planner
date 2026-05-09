@@ -52,11 +52,9 @@ function App() {
   const [editingExpenseId, setEditingExpenseId] = useState(null)
   const [editExpenseForm, setEditExpenseForm] = useState({})
 
-  // 💡 1. newExpense 的 itemId 改為 day_number，預設為第 1 天
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', day_number: 1, receipt_image: null })
   const [isScanning, setIsScanning] = useState(false)
 
-  // 💡 2. 新增：用來記錄目前記帳頁面「要查看哪一天」的狀態 (0 代表全部)
   const [expenseFilterDay, setExpenseFilterDay] = useState(0);
 
   const [receiptModalData, setReceiptModalData] = useState(null);
@@ -68,7 +66,6 @@ function App() {
   useEffect(() => localStorage.setItem('travelExchangeRate', exchangeRate), [exchangeRate]);
   useEffect(() => localStorage.setItem('travelBaseCurrency', baseCurrency), [baseCurrency]);
 
-  // 💡 貼心設計：當切換查看特定天數時，把新增記帳的預設日期也自動切過去
   useEffect(() => {
     if (expenseFilterDay !== 0) setNewExpense(prev => ({ ...prev, day_number: expenseFilterDay }));
   }, [expenseFilterDay]);
@@ -143,7 +140,20 @@ function App() {
       if (!res.ok) throw new Error("伺服器辨識失敗");
       const aiData = await res.json();
 
-      setReceiptModalData({ ...aiData, receipt_image: file });
+      let autoDayNumber = expenseFilterDay === 0 ? 1 : expenseFilterDay;
+      if (aiData.date && currentTrip.start_date) {
+        const tripStart = new Date(currentTrip.start_date + 'T00:00:00');
+        const receiptDate = new Date(aiData.date + 'T00:00:00');
+        if (!isNaN(receiptDate.getTime())) {
+          const diffTime = receiptDate - tripStart;
+          const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1;
+          if (diffDays >= 1 && diffDays <= totalDays) {
+            autoDayNumber = diffDays;
+          }
+        }
+      }
+
+      setReceiptModalData({ ...aiData, receipt_image: file, autoDayNumber });
       setIsReceiptModalForPreview(true);
     } catch (err) {
       console.error(err);
@@ -160,8 +170,7 @@ function App() {
     formData.append('amount', receiptModalData.amount);
     formData.append('category', receiptModalData.category);
     formData.append('description', JSON.stringify(receiptModalData.receipt_details));
-    // 💡 AI 生成花費時，自動綁定當下選擇的天數
-    formData.append('day_number', expenseFilterDay === 0 ? 1 : expenseFilterDay);
+    formData.append('day_number', receiptModalData.autoDayNumber);
     if (receiptModalData.receipt_image) formData.append('receipt_image', receiptModalData.receipt_image);
 
     fetch(`${API_BASE}/expenses`, { method: 'POST', body: formData }).then(() => { fetchExpenses(currentTrip.id); setReceiptModalData(null); });
@@ -171,7 +180,6 @@ function App() {
     e.preventDefault(); if (!newExpense.amount) return;
     const formData = new FormData();
     formData.append('trip_id', currentTrip.id); formData.append('amount', newExpense.amount); formData.append('category', newExpense.category); formData.append('description', newExpense.description);
-    // 💡 傳遞天數資料
     formData.append('day_number', newExpense.day_number);
     if (newExpense.receipt_image) { const compressed = await compressImage(newExpense.receipt_image); formData.append('receipt_image', compressed); }
     fetch(`${API_BASE}/expenses`, { method: 'POST', body: formData }).then(() => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', day_number: expenseFilterDay === 0 ? 1 : expenseFilterDay, receipt_image: null }); document.getElementById('receipt-upload').value = ''; })
@@ -201,12 +209,10 @@ function App() {
 
   const totalExpense = Array.isArray(expenses) ? expenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0) : 0;
 
-  // 💡 取得某天的總花費
   const getDailyTotalExpense = (day) => {
     return Array.isArray(expenses) ? expenses.filter(e => e.day_number === day).reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0) : 0;
   };
 
-  // 💡 記帳畫面的列表要依照篩選器過濾
   const filteredExpenses = Array.isArray(expenses)
     ? (expenseFilterDay === 0 ? expenses : expenses.filter(exp => exp.day_number === expenseFilterDay))
     : [];
@@ -262,43 +268,13 @@ function App() {
 
   const displayImageUrl = receiptModalData?.receipt_image ? URL.createObjectURL(receiptModalData.receipt_image) : receiptModalData?.image_url;
 
-  if (!currentTrip) {
-    return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', fontFamily: '"Segoe UI", sans-serif' }}>
-        <div style={{ width: '100%', maxWidth: '600px', backgroundColor: '#ffffff', padding: '30px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
-          <h1 style={{ textAlign: 'center', color: '#1a365d', marginBottom: '30px', fontSize: '1.8em', fontWeight: 600 }}>✈️ 我的旅遊管理大廳</h1>
-          <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '12px', marginBottom: '30px', border: '1px solid #e2e8f0', boxSizing: 'border-box' }}>
-            <h3 style={{ marginTop: 0, color: '#2b6cb0', fontWeight: 600 }}>➕ 建立新行程</h3>
-            <form onSubmit={handleCreateTrip} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-              <input type="text" placeholder="行程名稱" value={newTripForm.title} onChange={e => setNewTripForm({ ...newTripForm, title: e.target.value })} required style={{ padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', width: '100%' }} />
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <input type="date" value={newTripForm.start_date} onChange={e => setNewTripForm({ ...newTripForm, start_date: e.target.value })} required style={{ backgroundColor: '#fff', padding: '12px', flex: '1 1 120px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-                <input type="date" value={newTripForm.end_date} onChange={e => setNewTripForm({ ...newTripForm, end_date: e.target.value })} required style={{ backgroundColor: '#fff', padding: '12px', flex: '1 1 120px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-              </div>
-              <button type="submit" style={{ padding: '12px', backgroundColor: '#3182ce', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>新增行程</button>
-            </form>
-          </div>
-          {trips.map(trip => (
-            <div key={trip.id} onClick={() => selectTrip(trip)} style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', marginBottom: '15px', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.02)', boxSizing: 'border-box' }}>
-              <div><strong style={{ fontSize: '1.2em', color: '#2d3748' }}>{trip.title}</strong><br /><small style={{ color: '#718096' }}>📅 {trip.start_date} ~ {trip.end_date}</small></div>
-              <div style={{ display: 'flex', gap: '2px' }}>
-                <button onClick={(e) => startEditingLobbyTrip(trip, e)} style={{ background: 'none', border: 'none', fontSize: '0.9rem', cursor: 'pointer', outline: 'none', padding: '10px' }}>✏️</button>
-                <button onClick={(e) => handleDeleteTrip(trip.id, e)} style={{ background: 'none', border: 'none', fontSize: '0.9rem', color: '#fc8181', cursor: 'pointer', outline: 'none', padding: '10px' }}>🗑️</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
+  // 💡 補回的核心函數：渲染行程看板的每一天
   const renderDayColumn = (day, title = null) => {
     const dayItems = items.filter(item => item.day_number === day).sort((a, b) => a.order_index - b.order_index);
     const isWishlist = day === 0;
     return (
       <div key={`day-container-${day}`} style={{ width: '100%', backgroundColor: isWishlist ? '#ebf8ff' : '#e2e8f0', borderRadius: '16px', padding: '15px', boxSizing: 'border-box', marginBottom: '25px', border: isWishlist ? '2px dashed #90cdf4' : 'none' }}>
 
-        {/* 💡 3. 行程表上的每日花費總金額小按鈕 */}
         <div style={{ textAlign: 'center', marginBottom: '15px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px' }}>
           <span style={{ backgroundColor: '#ffffff', color: isWishlist ? '#2b6cb0' : '#4a5568', padding: '6px 16px', borderRadius: '12px', fontSize: '15px', fontWeight: 600, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
             {title || `Day ${day} (${getDisplayDate(currentTrip.start_date, day)})`}
@@ -368,6 +344,36 @@ function App() {
     )
   }
 
+  if (!currentTrip) {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', fontFamily: '"Segoe UI", sans-serif' }}>
+        <div style={{ width: '100%', maxWidth: '600px', backgroundColor: '#ffffff', padding: '30px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
+          <h1 style={{ textAlign: 'center', color: '#1a365d', marginBottom: '30px', fontSize: '1.8em', fontWeight: 600 }}>✈️ 我的旅遊管理大廳</h1>
+          <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '12px', marginBottom: '30px', border: '1px solid #e2e8f0', boxSizing: 'border-box' }}>
+            <h3 style={{ marginTop: 0, color: '#2b6cb0', fontWeight: 600 }}>➕ 建立新行程</h3>
+            <form onSubmit={handleCreateTrip} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <input type="text" placeholder="行程名稱" value={newTripForm.title} onChange={e => setNewTripForm({ ...newTripForm, title: e.target.value })} required style={{ padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', width: '100%' }} />
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <input type="date" value={newTripForm.start_date} onChange={e => setNewTripForm({ ...newTripForm, start_date: e.target.value })} required style={{ backgroundColor: '#fff', padding: '12px', flex: '1 1 120px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                <input type="date" value={newTripForm.end_date} onChange={e => setNewTripForm({ ...newTripForm, end_date: e.target.value })} required style={{ backgroundColor: '#fff', padding: '12px', flex: '1 1 120px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+              </div>
+              <button type="submit" style={{ padding: '12px', backgroundColor: '#3182ce', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>新增行程</button>
+            </form>
+          </div>
+          {trips.map(trip => (
+            <div key={trip.id} onClick={() => selectTrip(trip)} style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', marginBottom: '15px', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.02)', boxSizing: 'border-box' }}>
+              <div><strong style={{ fontSize: '1.2em', color: '#2d3748' }}>{trip.title}</strong><br /><small style={{ color: '#718096' }}>📅 {trip.start_date} ~ {trip.end_date}</small></div>
+              <div style={{ display: 'flex', gap: '2px' }}>
+                <button onClick={(e) => startEditingLobbyTrip(trip, e)} style={{ background: 'none', border: 'none', fontSize: '0.9rem', cursor: 'pointer', outline: 'none', padding: '10px' }}>✏️</button>
+                <button onClick={(e) => handleDeleteTrip(trip.id, e)} style={{ background: 'none', border: 'none', fontSize: '0.9rem', color: '#fc8181', cursor: 'pointer', outline: 'none', padding: '10px' }}>🗑️</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', fontFamily: '"Segoe UI", sans-serif', position: 'relative' }}>
 
@@ -393,8 +399,14 @@ function App() {
             <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
               {receiptModalData.receipt_details ? (
                 <>
-                  <div style={{ marginBottom: '15px', color: '#2f855a', fontWeight: 600, fontSize: '1.1em' }}>
-                    🏪 {receiptModalData.receipt_details.store_name}
+                  <div style={{ marginBottom: '15px', color: '#2f855a', fontWeight: 600, fontSize: '1.1em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>🏪 {receiptModalData.receipt_details.store_name}</span>
+
+                    {isReceiptModalForPreview && receiptModalData.autoDayNumber && (
+                      <span style={{ fontSize: '0.75em', backgroundColor: '#e6fffa', padding: '4px 8px', borderRadius: '8px', color: '#2c7a7b', border: '1px solid #b2f5ea', display: 'flex', alignItems: 'center' }}>
+                        📅 自動歸入 Day {receiptModalData.autoDayNumber}
+                      </span>
+                    )}
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
@@ -456,15 +468,15 @@ function App() {
         {/* 行程分頁區塊 */}
         {activeTab === 'itinerary' && (
           <><form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px', backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)', boxSizing: 'border-box' }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-              <select value={selectedDay} onChange={e => setSelectedDay(Number(e.target.value))} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: 600, color: '#2d3748', backgroundColor: '#f8fafc', flex: '1 1 100px', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}><option value={0}>✨ 願望清單</option>{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>第 {day} 天</option>))}</select>
-              <select value={newItemForm.category} onChange={e => setNewItemForm({ ...newItemForm, category: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', flex: '1 1 100px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
-              <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 10px', flex: '1 1 120px', boxSizing: 'border-box' }}><span>🕒</span><input type="time" value={newItemForm.start_time} onChange={e => setNewItemForm({ ...newItemForm, start_time: e.target.value })} style={{ border: 'none', outline: 'none', padding: '12px 5px', width: '100%', backgroundColor: 'transparent', fontSize: '16px', boxSizing: 'border-box' }} /></div>
-            </div>
-            <input type="text" placeholder="想去的景點..." value={newItemForm.content} onChange={e => setNewItemForm({ ...newItemForm, content: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-            <input type="url" placeholder="Google Map 連結 (選填)" value={newItemForm.map_url} onChange={e => setNewItemForm({ ...newItemForm, map_url: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-            <button type="submit" style={{ padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>＋ 加入</button>
-          </form><DragDropContext onDragEnd={onDragEnd}><div style={{ display: 'flex', flexDirection: 'column' }}>{renderDayColumn(0, '✨ 願望清單')}{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => renderDayColumn(day))}</div></DragDropContext></>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                <select value={selectedDay} onChange={e => setSelectedDay(Number(e.target.value))} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: 600, color: '#2d3748', backgroundColor: '#f8fafc', flex: '1 1 100px', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}><option value={0}>✨ 願望清單</option>{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>第 {day} 天</option>))}</select>
+                <select value={newItemForm.category} onChange={e => setNewItemForm({ ...newItemForm, category: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', flex: '1 1 100px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
+                <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 10px', flex: '1 1 120px', boxSizing: 'border-box' }}><span>🕒</span><input type="time" value={newItemForm.start_time} onChange={e => setNewItemForm({ ...newItemForm, start_time: e.target.value })} style={{ border: 'none', outline: 'none', padding: '12px 5px', width: '100%', backgroundColor: 'transparent', fontSize: '16px', boxSizing: 'border-box' }} /></div>
+              </div>
+              <input type="text" placeholder="想去的景點..." value={newItemForm.content} onChange={e => setNewItemForm({ ...newItemForm, content: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+              <input type="url" placeholder="Google Map 連結 (選填)" value={newItemForm.map_url} onChange={e => setNewItemForm({ ...newItemForm, map_url: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+              <button type="submit" style={{ padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>＋ 加入</button>
+            </form><DragDropContext onDragEnd={onDragEnd}><div style={{ display: 'flex', flexDirection: 'column' }}>{renderDayColumn(0, '✨ 願望清單')}{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => renderDayColumn(day))}</div></DragDropContext></>
         )}
 
         {/* 購物分頁區塊 */}
@@ -571,7 +583,6 @@ function App() {
               </label>
             </div>
 
-            {/* 💡 4. 收據紀錄標題與日期過濾器 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: '0 5px' }}>
               <h3 style={{ margin: 0, color: '#2d3748', fontSize: '1.1em', fontWeight: 600 }}>🧾 收據紀錄</h3>
               <select
@@ -593,7 +604,6 @@ function App() {
               </div>
               <input type="text" placeholder="消費明細" value={newExpense.description} onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', width: '100%', boxSizing: 'border-box' }} />
 
-              {/* 💡 5. 將原本選擇「景點」改為選擇「天數」 */}
               <select value={newExpense.day_number} onChange={(e) => setNewExpense({ ...newExpense, day_number: Number(e.target.value) })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', width: '100%', boxSizing: 'border-box' }}>
                 {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (
                   <option key={day} value={day}>📅 Day {day} ({getDisplayDate(currentTrip.start_date, day)})</option>
@@ -608,7 +618,6 @@ function App() {
             </form>
 
             <ul style={{ listStyle: 'none', padding: 0 }}>
-              {/* 💡 6. 這裡改用 filter 過的 filteredExpenses 來渲染 */}
               {filteredExpenses.map(exp => {
                 const isSmartExp = (() => { try { return !!JSON.parse(exp.description)?.store_name; } catch (e) { return false; } })();
 
@@ -638,7 +647,6 @@ function App() {
 
                           {renderSmartDescription(exp)}
 
-                          {/* 💡 7. 顯示日期天數 */}
                           <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '6px' }}>
                             📅 Day {exp.day_number} ({getDisplayDate(currentTrip.start_date, exp.day_number)})
                           </div>
@@ -663,7 +671,7 @@ function App() {
 
                           <div style={{ display: 'flex', gap: '8px' }}>
                             <button onClick={() => { setEditingExpenseId(exp.id); setEditExpenseForm(exp); }} style={{ background: '#edf2f7', border: 'none', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>✏️</button>
-                            <button onClick={() => deleteExpense(exp.id)} style={{ background: '#fff5f5', border: 'none', color: '#fc8181', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>🗑️</button>
+                            <button onClick={() => deleteExpense(exp.id)} style={{ background: 'none', border: 'none', color: '#fc8181', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>🗑️</button>
                           </div>
                         </div>
                       </div>
