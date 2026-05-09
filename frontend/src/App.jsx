@@ -56,7 +56,7 @@ function App() {
 
   // 💡 負責顯示掃描預覽及列表點擊展開的彈窗狀態
   const [receiptModalData, setReceiptModalData] = useState(null);
-  const [isReceiptModalForPreview, setIsReceiptModalForPreview] = useState(false); // 判斷是預覽要新增，還是純查看
+  const [isReceiptModalForPreview, setIsReceiptModalForPreview] = useState(false);
 
   const [exchangeRate, setExchangeRate] = useState(() => {
     return parseFloat(localStorage.getItem('travelExchangeRate')) || 0.215;
@@ -131,7 +131,6 @@ function App() {
   const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
   const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE' }).then(() => fetchShopping(currentTrip.id)) } }
 
-  // 💡 AI 掃描：改為呼叫成功後跳出預覽彈窗
   const handleAIScan = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -144,10 +143,9 @@ function App() {
       if (!res.ok) throw new Error("伺服器辨識失敗");
       const aiData = await res.json();
 
-      // 開啟預覽彈窗
       setReceiptModalData({
         ...aiData,
-        receipt_image: file // 保留原始圖片供最終上傳
+        receipt_image: file
       });
       setIsReceiptModalForPreview(true);
 
@@ -160,13 +158,11 @@ function App() {
     }
   }
 
-  // 💡 確認預覽後正式加入資料庫
   const handleConfirmAIExpense = () => {
     const formData = new FormData();
     formData.append('trip_id', currentTrip.id);
     formData.append('amount', receiptModalData.amount);
     formData.append('category', receiptModalData.category);
-    // 將完整的結構化明細轉成 JSON 存入資料庫
     formData.append('description', JSON.stringify(receiptModalData.receipt_details));
     if (receiptModalData.receipt_image) {
       formData.append('receipt_image', receiptModalData.receipt_image);
@@ -178,7 +174,6 @@ function App() {
     });
   }
 
-  // 既有的手動記帳功能完全保留
   const handleAddExpense = async (e) => {
     e.preventDefault(); if (!newExpense.amount) return;
     const formData = new FormData();
@@ -224,12 +219,11 @@ function App() {
     border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '16px'
   });
 
-  // 💡 智能解析明細：若為 JSON 格式，則外觀極度簡化，只顯示店名與查看按鈕
+  // 💡 智能解析明細
   const renderSmartDescription = (desc) => {
     if (!desc) return <span style={{ color: '#a0aec0', fontSize: '0.95em' }}>無明細</span>;
 
     try {
-      // 嘗試解析是否為 AI 生成的 JSON 格式
       const details = JSON.parse(desc);
       if (details && details.store_name) {
         return (
@@ -251,7 +245,7 @@ function App() {
         );
       }
     } catch (e) {
-      // 解析失敗代表是手動輸入的一般字串，走原本的文字渲染邏輯
+      // 非 JSON 格式
     }
 
     return (
@@ -260,6 +254,71 @@ function App() {
       </div>
     );
   };
+
+  // 💡 之前漏掉的核心功能：渲染每一天的看板
+  const renderDayColumn = (day, title = null) => {
+    const dayItems = items.filter(item => item.day_number === day).sort((a, b) => a.order_index - b.order_index);
+    const isWishlist = day === 0;
+    return (
+      <div key={`day-container-${day}`} style={{ width: '100%', backgroundColor: isWishlist ? '#ebf8ff' : '#e2e8f0', borderRadius: '16px', padding: '15px', boxSizing: 'border-box', marginBottom: '25px', border: isWishlist ? '2px dashed #90cdf4' : 'none' }}>
+        <div style={{ textAlign: 'center', marginBottom: '15px' }}>
+          <span style={{ backgroundColor: '#ffffff', color: isWishlist ? '#2b6cb0' : '#4a5568', padding: '6px 16px', borderRadius: '12px', fontSize: '15px', fontWeight: 600, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+            {title || `Day ${day} (${getDisplayDate(currentTrip.start_date, day)})`}
+          </span>
+        </div>
+        <Droppable droppableId={`day-${day}`}>
+          {(provided, snapshot) => (
+            <div {...provided.droppableProps} ref={provided.innerRef} style={{ minHeight: '50px', borderRadius: '12px', transition: 'background-color 0.2s', backgroundColor: snapshot.isDraggingOver ? '#cbd5e0' : 'transparent' }}>
+              {dayItems.length === 0 && <div style={{ textAlign: 'center', color: '#a0aec0', padding: '20px 0', border: '2px dashed #cbd5e0', borderRadius: '12px', fontSize: '14px', margin: '5px 0' }}>{isWishlist ? '沒有願望？快去新增一些吧！' : '還沒排行程喔！'}</div>}
+              {dayItems.map((item, index) => {
+                const cat = ITEM_CATEGORIES.find(c => c.name === (item.category || '景點')) || ITEM_CATEGORIES[0];
+                return (
+                  <Draggable key={item.id} draggableId={item.id} index={index}>
+                    {(p, s) => (
+                      <div ref={p.innerRef} {...p.draggableProps} {...p.dragHandleProps} style={{ userSelect: 'none', padding: '16px', margin: '0 0 10px 0', backgroundColor: '#ffffff', borderRadius: '10px', boxShadow: s.isDragging ? '0 10px 25px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.05)', borderLeft: `6px solid ${cat.color}`, boxSizing: 'border-box', ...p.draggableProps.style }}>
+                        {editingItemId === item.id ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                              <select value={editItemForm.category || '景點'} onChange={e => setEditItemForm({ ...editItemForm, category: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
+                              <input type="time" value={editItemForm.start_time || ''} onChange={e => setEditItemForm({ ...editItemForm, start_time: e.target.value })} style={{ backgroundColor: '#fff', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                              <input type="text" value={editItemForm.content} onChange={e => setEditItemForm({ ...editItemForm, content: e.target.value })} placeholder="景點名稱" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                            </div>
+                            <input type="url" value={editItemForm.map_url || ''} onChange={e => setEditItemForm({ ...editItemForm, map_url: e.target.value })} placeholder="Google Map 連結" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', outline: 'none', fontSize: '16px' }} />
+                            <textarea value={editItemForm.memo || ''} onChange={e => setEditItemForm({ ...editItemForm, memo: e.target.value })} placeholder="備註事項" rows="2" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', resize: 'vertical', outline: 'none', fontSize: '16px' }} />
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                              <button onClick={() => setEditingItemId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '15px' }}>取消</button>
+                              <button onClick={saveEditedItem} style={{ padding: '6px 12px', border: 'none', background: '#3182ce', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '15px' }}>儲存</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                                <span style={{ fontSize: '1.2em' }} title={cat.name}>{cat.icon}</span>
+                                {item.start_time && <span style={{ fontSize: '0.85em', fontWeight: 600, background: '#f0f4f8', color: '#4a5568', padding: '2px 6px', borderRadius: '4px' }}>{item.start_time}</span>}
+                                <strong style={{ fontSize: '1.1em', color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{item.content}</strong>
+                              </div>
+                              <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                                {item.map_url && <a href={item.map_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '0.9rem', padding: '10px' }}>📍</a>}
+                                <button onClick={() => { setEditingItemId(item.id); setEditItemForm(item) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem', outline: 'none', padding: '10px' }}>✏️</button>
+                                <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', fontSize: '0.9rem', outline: 'none', padding: '10px' }}>🗑️</button>
+                              </div>
+                            </div>
+                            {item.memo && <div style={{ marginTop: '10px', marginLeft: '35px', padding: '10px', backgroundColor: '#fcfaf2', borderLeft: '4px solid #f6e05e', borderRadius: '4px', fontSize: '0.9em', color: '#555', whiteSpace: 'pre-wrap' }}>{item.memo}</div>}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </Draggable>
+                )
+              })}
+              {provided.placeholder}
+            </div>
+          )}
+        </Droppable>
+      </div>
+    )
+  }
 
   if (!currentTrip) {
     return (
@@ -294,18 +353,16 @@ function App() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', fontFamily: '"Segoe UI", sans-serif', position: 'relative' }}>
 
-      {/* 💡 收據說明彈窗 Modal (如圖片設計般精美) */}
+      {/* 💡 收據說明彈窗 Modal */}
       {receiptModalData && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
           <div style={{ backgroundColor: '#ffffff', width: '100%', maxWidth: '400px', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
 
-            {/* 彈窗標頭 */}
             <div style={{ backgroundColor: '#48bb78', color: 'white', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: '1.2em', fontWeight: 600 }}>{isReceiptModalForPreview ? '確認收據內容' : '收據說明'}</h3>
               <button onClick={() => setReceiptModalData(null)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: 'none' }}>✕</button>
             </div>
 
-            {/* 彈窗內容：項目列表 */}
             <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
               {receiptModalData.receipt_details && (
                 <>
@@ -313,7 +370,6 @@ function App() {
                     🏪 {receiptModalData.receipt_details.store_name}
                   </div>
 
-                  {/* 商品迴圈 */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
                     {receiptModalData.receipt_details.items?.map((item, idx) => (
                       <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', fontSize: '1em', color: '#2d3748' }}>
@@ -326,7 +382,6 @@ function App() {
 
                   <hr style={{ border: 'none', borderTop: '2px dashed #cbd5e0', margin: '15px 0' }} />
 
-                  {/* 金額統計 */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: '#4a5568', marginBottom: '8px' }}>
                     <span>小計</span><span>¥{receiptModalData.receipt_details.subtotal?.toLocaleString()}</span>
                   </div>
@@ -344,7 +399,6 @@ function App() {
               )}
             </div>
 
-            {/* 如果是預覽模式，顯示確認按鈕 */}
             {isReceiptModalForPreview && (
               <div style={{ padding: '15px 20px', backgroundColor: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', gap: '10px' }}>
                 <button onClick={() => setReceiptModalData(null)} style={{ flex: 1, padding: '12px', background: '#e2e8f0', border: 'none', borderRadius: '8px', cursor: 'pointer', color: '#4a5568', fontWeight: 600, fontSize: '16px' }}>重拍 / 取消</button>
@@ -378,7 +432,7 @@ function App() {
             <input type="text" placeholder="想去的景點..." value={newItemForm.content} onChange={e => setNewItemForm({ ...newItemForm, content: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
             <input type="url" placeholder="Google Map 連結 (選填)" value={newItemForm.map_url} onChange={e => setNewItemForm({ ...newItemForm, map_url: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
             <button type="submit" style={{ padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>＋ 加入</button>
-          </form><DragDropContext onDragEnd="{onDragEnd}"><div style={{ display: 'flex', flexDirection: 'column' }}>{renderDayColumn(0, '✨ 願望清單')}{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => renderDayColumn(day))}</div></DragDropContext></>
+          </form><DragDropContext onDragEnd={onDragEnd}><div style={{ display: 'flex', flexDirection: 'column' }}>{renderDayColumn(0, '✨ 願望清單')}{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => renderDayColumn(day))}</div></DragDropContext></>
         )}
 
         {activeTab === 'shopping' && (
@@ -510,7 +564,6 @@ function App() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
                         <input type="number" value={editExpenseForm.amount} onChange={e => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })} placeholder={`金額 (${baseCurrency})`} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                         <select value={editExpenseForm.category} onChange={e => setEditExpenseForm({ ...editExpenseForm, category: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }}>{EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
-                        {/* 若原本是 JSON 結構，編輯時會顯示原字串，確保可以手動改回普通字串 */}
                         <input type="text" value={editExpenseForm.description} onChange={e => setEditExpenseForm({ ...editExpenseForm, description: e.target.value })} placeholder="消費明細" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '5px' }}>
                           <button onClick={() => setEditingExpenseId(null)} style={{ padding: '8px 16px', border: 'none', background: '#e2e8f0', color: '#4a5568', borderRadius: '6px', cursor: 'pointer', fontSize: '15px', fontWeight: 600 }}>取消</button>
@@ -522,7 +575,6 @@ function App() {
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
                           <strong style={{ color: '#2d3748', fontSize: '1.05em', marginBottom: '4px' }}>{exp.category}</strong>
 
-                          {/* 💡 智能解析，將 JSON 顯示為「點擊看明細」，否則顯示普通文字 */}
                           {renderSmartDescription(exp.description)}
 
                           {relatedItem && <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '6px' }}>📍 Day {relatedItem.day_number} - {relatedItem.content}</div>}
