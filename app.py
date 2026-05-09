@@ -53,11 +53,11 @@ class Expense(db.Model):
     __tablename__ = 'expense'
     id = db.Column(db.Integer, primary_key=True)
     trip_id = db.Column(db.Integer, db.ForeignKey('trip.id'), nullable=False)
-    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), nullable=True)
+    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), nullable=True) # 保留舊欄位防報錯
+    day_number = db.Column(db.Integer, default=1) # 💡 新增的：記錄這筆帳是第幾天
     amount = db.Column(db.Float, nullable=False)
     currency = db.Column(db.String(10), default='JPY')
     category = db.Column(db.String(50), nullable=False)
-    # 💡 關鍵修改：將 String(200) 改為 Text，以便儲存 JSON 格式的完整收據明細
     description = db.Column(db.Text, nullable=True)
     image_url = db.Column(db.String(200), nullable=True)
 
@@ -216,8 +216,7 @@ def reorder_items():
 def handle_expenses():
     if request.method == 'POST':
         trip_id = request.form.get('trip_id')
-        item_id = request.form.get('itemId')
-        item_id = int(item_id) if item_id else None
+        day_number = request.form.get('day_number', 1)
         amount = request.form.get('amount')
         category = request.form.get('category')
         description = request.form.get('description')
@@ -230,14 +229,16 @@ def handle_expenses():
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
 
-        new_expense = Expense(trip_id=trip_id, item_id=item_id, amount=float(amount), category=category, description=description, image_url=image_url)
+        # 💡 將 item_id 設為 None，改用 day_number 記錄
+        new_expense = Expense(trip_id=trip_id, item_id=None, day_number=int(day_number), amount=float(amount), category=category, description=description, image_url=image_url)
         db.session.add(new_expense)
         db.session.commit()
         return jsonify({"status": "success"}), 201
 
     trip_id = request.args.get('trip_id')
     expenses = Expense.query.filter_by(trip_id=trip_id).order_by(Expense.id.desc()).all()
-    return jsonify([{"id": str(exp.id), "amount": exp.amount, "category": exp.category, "description": exp.description, "itemId": str(exp.item_id) if exp.item_id else "", "image_url": exp.image_url} for exp in expenses])
+    # 💡 GET 回傳時加上 day_number
+    return jsonify([{"id": str(exp.id), "amount": exp.amount, "category": exp.category, "description": exp.description, "day_number": exp.day_number, "image_url": exp.image_url} for exp in expenses])
 
 @app.route('/api/expenses/<int:exp_id>', methods=['PUT', 'DELETE'])
 def handle_single_expense(exp_id):
@@ -251,7 +252,7 @@ def handle_single_expense(exp_id):
     if 'amount' in data: exp.amount = float(data['amount'])
     if 'category' in data: exp.category = data['category']
     if 'description' in data: exp.description = data['description']
-    if 'itemId' in data: exp.item_id = int(data['itemId']) if data['itemId'] else None
+    if 'day_number' in data: exp.day_number = int(data['day_number']) # 💡 支援編輯修改天數
     
     db.session.commit()
     return jsonify({"status": "success"})
