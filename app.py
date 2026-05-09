@@ -8,12 +8,10 @@ import json
 from dotenv import load_dotenv
 load_dotenv()
 
-# 新增的 AI 與圖片處理套件
 import google.generativeai as genai
 from PIL import Image
 import io
 
-# 💡 填入你的 Gemini API 金鑰
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 app = Flask(__name__)
@@ -59,7 +57,8 @@ class Expense(db.Model):
     amount = db.Column(db.Float, nullable=False)
     currency = db.Column(db.String(10), default='JPY')
     category = db.Column(db.String(50), nullable=False)
-    description = db.Column(db.String(200), nullable=True)
+    # 💡 關鍵修改：將 String(200) 改為 Text，以便儲存 JSON 格式的完整收據明細
+    description = db.Column(db.Text, nullable=True)
     image_url = db.Column(db.String(200), nullable=True)
 
 class ShoppingItem(db.Model):
@@ -82,7 +81,7 @@ def index():
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# ====== 🤖 核心功能：AI 掃描發票 API (高精準穩定版) ======
+# ====== 🤖 核心功能：AI 掃描發票 API (進階明細解析版) ======
 @app.route('/api/scan-receipt', methods=['POST'])
 def scan_receipt():
     try:
@@ -90,29 +89,36 @@ def scan_receipt():
             return jsonify({"error": "沒有圖片"}), 400
             
         file = request.files['receipt_image']
-        
-        # 在記憶體中打開圖片，不存進硬碟
         image_data = file.read()
         image = Image.open(io.BytesIO(image_data))
         
-        # 呼叫 Gemini 模型
         model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
         
-        # 給 AI 的嚴格指令 (專治外文翻譯與價格提取)
+        # 💡 關鍵修改：要求 AI 輸出高度結構化的 JSON 陣列，完美還原收據樣貌
         prompt = """
-        你是一個專業的旅遊記帳助手。請分析這張收據照片，提取以下3個資訊：
-        1. "amount": 最終付款「總金額」(請移除千位數逗號，只要純數字字串，例如 "115000")。請特別注意發票上的「合計」、「支払」或折扣後的最終實際支付金額。
-        2. "description": 「消費明細」。請務必將所有外文(如韓文、日文、泰文等)「準確翻譯成繁體中文」。
-           【格式嚴格要求】：【店家名稱】 - 【商品A】:單價、【商品B】:單價。
-           (範例："濟州保健藥局 - 消除水腫口服液:15000、修復霜:30000、痠痛消炎乳液:20000")
-           注意：商品名稱與其單價之間「必須」用半形冒號(:)隔開，不同商品之間用頓號(、)隔開。全部串在同一行，絕對不可使用換行符號。
-        3. "category": 「消費類別」，只能從 [飲食, 交通, 購物, 住宿, 其他] 中選出一個最主要的屬性。
-
-        請務必遵守：只輸出標準 JSON 格式，不可包含 Markdown 標記，不可包含任何解釋文字。
-        格式範例:{"amount": "115000", "description": "濟州保健藥局 - 消除水腫口服液:15000、修復霜:30000", "category": "購物"}
+        你是一個專業的旅遊記帳助手。請分析這張收據照片，並將所有外文(如日文、韓文、泰文等)「準確翻譯成符合台灣人習慣的繁體中文」。
+        請嚴格按照以下 JSON 格式輸出，絕對不可包含 Markdown (如 ```json) 或任何解釋文字：
+        {
+            "amount": "19153",
+            "category": "購物",
+            "receipt_details": {
+                "store_name": "店家名稱(盡量保留原文或加上中文)",
+                "items": [
+                    {"name": "樂敦 AG 抗過敏眼藥水 15ml", "qty": 1, "price": 1290},
+                    {"name": "OK繃", "qty": 2, "price": 1290}
+                ],
+                "subtotal": 20162,
+                "discount": -1009,
+                "total": 19153
+            }
+        }
+        注意規則：
+        1. 仔細辨識商品名稱、數量與單價，若無明確數量，qty 預設為 1。
+        2. discount 若無折扣則填 0。
+        3. amount 必須等於折扣後的 final total (純數字)。
+        4. category 只能從 [飲食, 交通, 購物, 住宿, 其他] 中選出最符合的一個。
         """
         
-        # 💡 殺手鐧：強制模型只能在底層輸出 JSON 格式，徹底杜絕字串解析崩潰
         response = model.generate_content(
             [prompt, image],
             generation_config=genai.types.GenerationConfig(
@@ -121,9 +127,8 @@ def scan_receipt():
         )
         
         res_text = response.text.strip()
-        print("💡 AI 原始回應:", res_text) # 印出日誌，方便你在伺服器上查看辨識細節
+        print("💡 AI 原始回應:", res_text)
         
-        # 直接轉成 Python 字典，不再需要手動清理 ```json
         parsed_data = json.loads(res_text)
         return jsonify(parsed_data), 200
 
@@ -131,14 +136,11 @@ def scan_receipt():
         print("❌ JSON 解析錯誤:", str(je), "原始文字:", res_text)
         return jsonify({"error": "AI 回傳格式異常，請重拍一次"}), 500
     except Exception as e:
-        # 💡 強制清除緩衝，印出到伺服器日誌
         import sys
         import traceback
         print("❌ 真實死因:", str(e), flush=True)
         print(traceback.format_exc(), flush=True)
         sys.stdout.flush()
-        
-        # 💡 【關鍵】把真正的錯誤訊息直接包成 JSON 傳給前端！
         return jsonify({"error": f"後端真實錯誤: {str(e)}"}), 500
 
 # --- 其餘既有的 API 路由保持完全不變 ---
@@ -232,10 +234,9 @@ def handle_expenses():
         return jsonify({"status": "success"}), 201
 
     trip_id = request.args.get('trip_id')
-    expenses = Expense.query.filter_by(trip_id=trip_id).all()
+    expenses = Expense.query.filter_by(trip_id=trip_id).order_by(Expense.id.desc()).all()
     return jsonify([{"id": str(exp.id), "amount": exp.amount, "category": exp.category, "description": exp.description, "itemId": str(exp.item_id) if exp.item_id else "", "image_url": exp.image_url} for exp in expenses])
 
-# --- 記帳 API (支援 刪除 與 編輯更新) ---
 @app.route('/api/expenses/<int:exp_id>', methods=['PUT', 'DELETE'])
 def handle_single_expense(exp_id):
     exp = Expense.query.get_or_404(exp_id)
@@ -244,7 +245,6 @@ def handle_single_expense(exp_id):
         db.session.commit()
         return jsonify({"status": "deleted"})
     
-    # 💡 這裡是補上的編輯邏輯
     data = request.get_json()
     if 'amount' in data: exp.amount = float(data['amount'])
     if 'category' in data: exp.category = data['category']
