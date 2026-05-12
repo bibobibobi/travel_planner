@@ -6,8 +6,12 @@ import os
 from werkzeug.utils import secure_filename
 import json
 from dotenv import load_dotenv
+import http.client
+import time
+
 load_dotenv()
 
+# 新增的 AI 與圖片處理套件
 import google.generativeai as genai
 from PIL import Image
 import io
@@ -24,6 +28,44 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 CORS(app)
 db = SQLAlchemy(app)
+
+# ====== 💡 新增：自動匯率 API 與 1小時快取機制 ======
+rate_cache = {}
+
+def get_twd_rate(base_currency):
+    if base_currency == 'TWD':
+        return 1.0
+    
+    now = time.time()
+    # 快取有效期限：3600 秒 (1小時)。確保一個月最多只耗 720 次請求！
+    if base_currency in rate_cache and (now - rate_cache[base_currency]['timestamp'] < 3600):
+        return rate_cache[base_currency]['rate']
+    
+    api_key = os.environ.get("FXRATES_API_KEY")
+        
+    try:
+        conn = http.client.HTTPSConnection("api.fxratesapi.com")
+        # 串接你的專屬 API Key，並設定 resolution=1h
+        url = f"/latest?api_key={api_key}&base={base_currency}&currencies=TWD&resolution=1h&amount=1&places=4&format=json"
+        conn.request("GET", url)
+        res = conn.getresponse()
+        data = res.read()
+        parsed = json.loads(data.decode("utf-8"))
+        
+        if parsed.get("success") and "rates" in parsed and "TWD" in parsed["rates"]:
+            rate = float(parsed["rates"]["TWD"])
+            rate_cache[base_currency] = {'rate': rate, 'timestamp': now}
+            return rate
+    except Exception as e:
+        print("API 匯率獲取失敗:", e)
+        
+    # 若斷網或 API 異常，自動退回使用快取或預設安全值 (斷網保護)
+    if base_currency in rate_cache:
+        return rate_cache[base_currency]['rate']
+        
+    fallbacks = {'JPY': 0.215, 'KRW': 0.024, 'THB': 0.88, 'USD': 32.0, 'EUR': 34.0, 'VND': 0.0013}
+    return fallbacks.get(base_currency, 1.0)
+
 
 # ================= 資料庫模型 =================
 class Trip(db.Model):
@@ -53,9 +95,10 @@ class Expense(db.Model):
     __tablename__ = 'expense'
     id = db.Column(db.Integer, primary_key=True)
     trip_id = db.Column(db.Integer, db.ForeignKey('trip.id'), nullable=False)
-    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), nullable=True) # 保留舊欄位防報錯
-    day_number = db.Column(db.Integer, default=1) # 💡 新增的：記錄這筆帳是第幾天
+    item_id = db.Column(db.Integer, db.ForeignKey('item.id'), nullable=True)
+    day_number = db.Column(db.Integer, default=1)
     amount = db.Column(db.Float, nullable=False)
+    twd_amount = db.Column(db.Float, default=0) # 💡 新增：永久紀錄記帳當下的台幣金額
     currency = db.Column(db.String(10), default='JPY')
     category = db.Column(db.String(50), nullable=False)
     description = db.Column(db.Text, nullable=True)
@@ -81,7 +124,7 @@ def index():
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# ====== 🤖 核心功能：AI 掃描發票 API (進階明細解析版) ======
+# ====== 🤖 核心功能：AI 掃描發票 API ======
 @app.route('/api/scan-receipt', methods=['POST'])
 def scan_receipt():
     try:
@@ -94,7 +137,6 @@ def scan_receipt():
         
         model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
         
-        # 給 AI 的嚴格指令 (專治外文翻譯與價格提取，強制鎖死繁體中文)
         prompt = """
         你是一個專業的旅遊記帳助手。請分析這張收據照片。
         【⚠️最高強制語言要求】：無論你的伺服器在哪、預設語言為何，或者使用者的手機作業系統語言為何，你「必須、絕對要將所有內容(包含商品名稱、店名等)翻譯成符合台灣人習慣的繁體中文 (Traditional Chinese)」。絕對禁止輸出英文或其他語言！
@@ -123,31 +165,17 @@ def scan_receipt():
         5. date 為收據上的消費日期，請一律轉換為 "YYYY-MM-DD" 格式（例如 "2026-02-15"）。若無明確日期請輸出空字串 ""。
         """
         
-        response = model.generate_content(
-            [prompt, image],
-            generation_config=genai.types.GenerationConfig(
-                response_mime_type="application/json",
-            )
-        )
-        
+        response = model.generate_content([prompt, image], generation_config=genai.types.GenerationConfig(response_mime_type="application/json"))
         res_text = response.text.strip()
         print("💡 AI 原始回應:", res_text)
         
         parsed_data = json.loads(res_text)
         return jsonify(parsed_data), 200
 
-    except json.JSONDecodeError as je:
-        print("❌ JSON 解析錯誤:", str(je), "原始文字:", res_text)
-        return jsonify({"error": "AI 回傳格式異常，請重拍一次"}), 500
     except Exception as e:
-        import sys
-        import traceback
-        print("❌ 真實死因:", str(e), flush=True)
-        print(traceback.format_exc(), flush=True)
-        sys.stdout.flush()
         return jsonify({"error": f"後端真實錯誤: {str(e)}"}), 500
 
-# --- 其餘既有的 API 路由保持完全不變 ---
+# --- 其餘 API 路由 ---
 @app.route('/api/trips', methods=['GET', 'POST'])
 def handle_trips():
     if request.method == 'POST':
@@ -189,7 +217,6 @@ def handle_items():
 def modify_item(item_id):
     item = ItineraryItem.query.get_or_404(item_id)
     if request.method == 'DELETE':
-        Expense.query.filter_by(item_id=item_id).update({'item_id': None})
         db.session.delete(item)
         db.session.commit()
         return jsonify({"status": "deleted"})
@@ -220,6 +247,7 @@ def handle_expenses():
         trip_id = request.form.get('trip_id')
         day_number = request.form.get('day_number', 1)
         amount = request.form.get('amount')
+        currency = request.form.get('currency', 'JPY')
         category = request.form.get('category')
         description = request.form.get('description')
 
@@ -231,16 +259,27 @@ def handle_expenses():
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
 
-        # 💡 將 item_id 設為 None，改用 day_number 記錄
-        new_expense = Expense(trip_id=trip_id, item_id=None, day_number=int(day_number), amount=float(amount), category=category, description=description, image_url=image_url)
+        # 💡 自動呼叫 API 換算成台幣並存入資料庫
+        rate = get_twd_rate(currency)
+        twd_amount = round(float(amount) * rate)
+
+        new_expense = Expense(
+            trip_id=trip_id, item_id=None, day_number=int(day_number), 
+            amount=float(amount), twd_amount=twd_amount, currency=currency, 
+            category=category, description=description, image_url=image_url
+        )
         db.session.add(new_expense)
         db.session.commit()
         return jsonify({"status": "success"}), 201
 
     trip_id = request.args.get('trip_id')
     expenses = Expense.query.filter_by(trip_id=trip_id).order_by(Expense.id.desc()).all()
-    # 💡 GET 回傳時加上 day_number
-    return jsonify([{"id": str(exp.id), "amount": exp.amount, "category": exp.category, "description": exp.description, "day_number": exp.day_number, "image_url": exp.image_url} for exp in expenses])
+    # 回傳時包含永久紀錄的 twd_amount 和 currency
+    return jsonify([{
+        "id": str(exp.id), "amount": exp.amount, "twd_amount": getattr(exp, 'twd_amount', 0), 
+        "currency": exp.currency, "category": exp.category, "description": exp.description, 
+        "day_number": exp.day_number, "image_url": exp.image_url
+    } for exp in expenses])
 
 @app.route('/api/expenses/<int:exp_id>', methods=['PUT', 'DELETE'])
 def handle_single_expense(exp_id):
@@ -251,10 +290,23 @@ def handle_single_expense(exp_id):
         return jsonify({"status": "deleted"})
     
     data = request.get_json()
-    if 'amount' in data: exp.amount = float(data['amount'])
+    recalculate = False
+    
+    if 'amount' in data: 
+        exp.amount = float(data['amount'])
+        recalculate = True
+    if 'currency' in data:
+        exp.currency = data['currency']
+        recalculate = True
+        
+    # 💡 編輯時如果改了金額或幣別，重新換算台幣
+    if recalculate:
+        rate = get_twd_rate(exp.currency)
+        exp.twd_amount = round(exp.amount * rate)
+
     if 'category' in data: exp.category = data['category']
     if 'description' in data: exp.description = data['description']
-    if 'day_number' in data: exp.day_number = int(data['day_number']) # 💡 支援編輯修改天數
+    if 'day_number' in data: exp.day_number = int(data['day_number'])
     
     db.session.commit()
     return jsonify({"status": "success"})
@@ -265,7 +317,6 @@ def handle_shopping():
         trip_id = request.form.get('trip_id')
         name = request.form.get('name')
         location = request.form.get('location', '')
-        
         image_url = None
         if 'item_image' in request.files:
             file = request.files['item_image']
@@ -273,7 +324,6 @@ def handle_shopping():
                 filename = secure_filename(f"shop_{int(datetime.now().timestamp())}_{file.filename}")
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
-
         new_shop = ShoppingItem(trip_id=trip_id, name=name, location=location, is_bought=False, image_url=image_url)
         db.session.add(new_shop)
         db.session.commit()

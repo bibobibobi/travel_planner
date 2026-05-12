@@ -60,10 +60,8 @@ function App() {
   const [receiptModalData, setReceiptModalData] = useState(null);
   const [isReceiptModalForPreview, setIsReceiptModalForPreview] = useState(false);
 
-  const [exchangeRate, setExchangeRate] = useState(() => parseFloat(localStorage.getItem('travelExchangeRate')) || 0.215);
+  // 💡 前端只負責記憶使用者當前想用的「預設外幣」，不處理匯率了
   const [baseCurrency, setBaseCurrency] = useState(() => localStorage.getItem('travelBaseCurrency') || 'JPY');
-
-  useEffect(() => localStorage.setItem('travelExchangeRate', exchangeRate), [exchangeRate]);
   useEffect(() => localStorage.setItem('travelBaseCurrency', baseCurrency), [baseCurrency]);
 
   useEffect(() => {
@@ -164,10 +162,12 @@ function App() {
     }
   }
 
+  // 💡 把所選的外幣幣別送到後端，後端會負責抓 API 轉換台幣並鎖定寫入
   const handleConfirmAIExpense = () => {
     const formData = new FormData();
     formData.append('trip_id', currentTrip.id);
     formData.append('amount', receiptModalData.amount);
+    formData.append('currency', baseCurrency); // 傳送當前選擇的幣別給後端
     formData.append('category', receiptModalData.category);
     formData.append('description', JSON.stringify(receiptModalData.receipt_details));
     formData.append('day_number', receiptModalData.autoDayNumber);
@@ -179,9 +179,14 @@ function App() {
   const handleAddExpense = async (e) => {
     e.preventDefault(); if (!newExpense.amount) return;
     const formData = new FormData();
-    formData.append('trip_id', currentTrip.id); formData.append('amount', newExpense.amount); formData.append('category', newExpense.category); formData.append('description', newExpense.description);
+    formData.append('trip_id', currentTrip.id); 
+    formData.append('amount', newExpense.amount); 
+    formData.append('currency', baseCurrency); 
+    formData.append('category', newExpense.category); 
+    formData.append('description', newExpense.description);
     formData.append('day_number', newExpense.day_number);
     if (newExpense.receipt_image) { const compressed = await compressImage(newExpense.receipt_image); formData.append('receipt_image', compressed); }
+    
     fetch(`${API_BASE}/expenses`, { method: 'POST', body: formData }).then(() => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', day_number: expenseFilterDay === 0 ? 1 : expenseFilterDay, receipt_image: null }); document.getElementById('receipt-upload').value = ''; })
   }
 
@@ -207,19 +212,27 @@ function App() {
     fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reordered_items: payload }) });
   }
 
-  const totalExpense = Array.isArray(expenses) ? expenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0) : 0;
-
-  const getDailyTotalExpense = (day) => {
-    return Array.isArray(expenses) ? expenses.filter(e => e.day_number === day).reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0) : 0;
-  };
-
   const filteredExpenses = Array.isArray(expenses)
     ? (expenseFilterDay === 0 ? expenses : expenses.filter(exp => exp.day_number === expenseFilterDay))
     : [];
 
+  // 💡 直接讀取資料庫回傳的真實台幣價值！
+  const totalBaseExpense = filteredExpenses
+    .filter(e => (e.currency || 'JPY') === baseCurrency)
+    .reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
+    
+  const totalTwdExpense = filteredExpenses.reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0);
+
+  // 在行程看板也顯示真實的台幣加總
+  const getDailyTotalTwdExpense = (day) => {
+    return Array.isArray(expenses) ? expenses.filter(e => e.day_number === day).reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0) : 0;
+  };
+
   const categoryTotals = filteredExpenses.reduce((acc, exp) => {
     const cat = exp.category || '其他';
-    acc[cat] = (acc[cat] || 0) + (Number(exp.amount) || 0);
+    acc[cat] = acc[cat] || { amount: 0, twd: 0 };
+    acc[cat].amount += (Number(exp.amount) || 0);
+    acc[cat].twd += (Number(exp.twd_amount) || 0);
     return acc;
   }, {});
 
@@ -240,7 +253,7 @@ function App() {
         return (
           <div
             onClick={() => {
-              setReceiptModalData({ receipt_details: details, image_url: exp.image_url });
+              setReceiptModalData({ receipt_details: details, image_url: exp.image_url, currency: exp.currency });
               setIsReceiptModalForPreview(false);
             }}
             style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '4px' }}
@@ -255,9 +268,7 @@ function App() {
           </div>
         );
       }
-    } catch (e) {
-      // 非 JSON 格式
-    }
+    } catch (e) { }
 
     return <div style={{ color: '#4a5568', fontSize: '0.95em', wordBreak: 'break-word', whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>{desc}</div>;
   };
@@ -268,7 +279,6 @@ function App() {
 
   const displayImageUrl = receiptModalData?.receipt_image ? URL.createObjectURL(receiptModalData.receipt_image) : receiptModalData?.image_url;
 
-  // 💡 補回的核心函數：渲染行程看板的每一天
   const renderDayColumn = (day, title = null) => {
     const dayItems = items.filter(item => item.day_number === day).sort((a, b) => a.order_index - b.order_index);
     const isWishlist = day === 0;
@@ -285,7 +295,7 @@ function App() {
               style={{ backgroundColor: '#fff5f5', color: '#c53030', border: '1px solid #feb2b2', borderRadius: '12px', padding: '4px 10px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', outline: 'none', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', transition: 'all 0.2s' }}
               title="點擊跳轉到當日花費"
             >
-              💰 {baseCurrency === 'JPY' ? '¥' : '$'}{getDailyTotalExpense(day).toLocaleString()}
+              💰 {getDailyTotalTwdExpense(day).toLocaleString()} TWD
             </button>
           )}
         </div>
@@ -430,7 +440,7 @@ function App() {
                       <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', fontSize: '1em', color: '#2d3748' }}>
                         <span style={{ flex: 1, paddingRight: '15px', lineHeight: '1.3' }}>{item.name}</span>
                         <span style={{ width: '30px', textAlign: 'center', color: '#718096' }}>{item.qty}</span>
-                        <span style={{ width: '70px', textAlign: 'right', fontWeight: 500 }}>{baseCurrency === 'JPY' ? '¥' : '$'}{item.price?.toLocaleString()}</span>
+                        <span style={{ width: '70px', textAlign: 'right', fontWeight: 500 }}>{receiptModalData.currency === 'JPY' ? '¥' : '$'}{item.price?.toLocaleString()}</span>
                       </div>
                     ))}
                   </div>
@@ -438,17 +448,17 @@ function App() {
                   <hr style={{ border: 'none', borderTop: '2px dashed #cbd5e0', margin: '15px 0' }} />
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: '#4a5568', marginBottom: '8px' }}>
-                    <span>小計</span><span>{baseCurrency === 'JPY' ? '¥' : '$'}{receiptModalData.receipt_details.subtotal?.toLocaleString()}</span>
+                    <span>小計</span><span>{receiptModalData.currency === 'JPY' ? '¥' : '$'}{receiptModalData.receipt_details.subtotal?.toLocaleString()}</span>
                   </div>
                   {receiptModalData.receipt_details.discount !== 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#e53e3e', marginBottom: '8px' }}>
-                      <span>優惠折扣</span><span>{baseCurrency === 'JPY' ? '¥' : '$'}{receiptModalData.receipt_details.discount?.toLocaleString()}</span>
+                      <span>優惠折扣</span><span>{receiptModalData.currency === 'JPY' ? '¥' : '$'}{receiptModalData.receipt_details.discount?.toLocaleString()}</span>
                     </div>
                   )}
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '15px', paddingTop: '15px', borderTop: '2px solid #e2e8f0' }}>
                     <span style={{ fontSize: '1.3em', fontWeight: 600, color: '#2d3748' }}>合計</span>
-                    <span style={{ fontSize: '1.6em', fontWeight: 700, color: '#2d3748' }}>{baseCurrency === 'JPY' ? '¥' : '$'}{receiptModalData.receipt_details.total?.toLocaleString()}</span>
+                    <span style={{ fontSize: '1.6em', fontWeight: 700, color: '#2d3748' }}>{receiptModalData.currency === 'JPY' ? '¥' : '$'}{receiptModalData.receipt_details.total?.toLocaleString()}</span>
                   </div>
                 </>
               ) : (
@@ -547,28 +557,26 @@ function App() {
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
 
+            {/* 💡 直接拔掉外層的「匯率輸入框」與「刷新按鈕」，完全做到 Zero UI */}
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', flexWrap: 'wrap', gap: '15px', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ flex: '1 1 min-content' }}>
                 <h2 style={{ margin: '0 0 12px 0', color: '#c53030', fontWeight: 600, whiteSpace: 'nowrap' }}>目前總花費</h2>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '8px 6px', alignItems: 'center', fontSize: '0.9em', color: '#718096' }}>
-                  <span style={{ textAlign: 'right', fontWeight: 600 }}>幣別：</span>
+                  <span style={{ textAlign: 'right', fontWeight: 600 }}>預設幣別：</span>
                   <select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} style={{ padding: '6px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', backgroundColor: '#fff', width: '120px', fontSize: '1em', cursor: 'pointer' }}>
                     {CURRENCY_OPTIONS.map(cur => (
                       <option key={cur.code} value={cur.code}>{cur.label}</option>
                     ))}
                   </select>
-
-                  <span style={{ textAlign: 'right', fontWeight: 600 }}>匯率：</span>
-                  <input type="number" step="0.001" value={exchangeRate} onChange={e => setExchangeRate(e.target.value)} style={{ padding: '6px', borderRadius: '6px', border: '1px solid #cbd5e0', fontSize: '1em', outline: 'none', width: '90px' }} />
                 </div>
               </div>
               <div style={{ textAlign: 'right', flex: '0 0 auto' }}>
                 <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e', display: 'block', lineHeight: '1.2' }}>
-                  {totalExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>{baseCurrency}</span>
+                  {totalBaseExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>{baseCurrency}</span>
                 </span>
                 <span style={{ fontSize: '1em', color: '#718096', fontWeight: 500, display: 'block', marginTop: '4px' }}>
-                  ≈ {Math.round(totalExpense * exchangeRate).toLocaleString()} TWD
+                  ≈ {totalTwdExpense.toLocaleString()} TWD
                 </span>
               </div>
             </div>
@@ -581,10 +589,10 @@ function App() {
                     <div key={cat.name} style={{ flex: '0 0 auto', backgroundColor: '#f8fafc', padding: '12px 15px', borderRadius: '10px', border: '1px solid #e2e8f0', minWidth: '100px', boxSizing: 'border-box' }}>
                       <div style={{ fontSize: '0.9em', color: '#718096', marginBottom: '4px', fontWeight: 600 }}>{cat.icon} {cat.name}</div>
                       <div style={{ fontSize: '1.2em', color: '#2d3748', fontWeight: 600 }}>
-                        {categoryTotals[cat.name].toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{baseCurrency}</span>
+                        {categoryTotals[cat.name].amount.toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{baseCurrency}</span>
                       </div>
                       <div style={{ fontSize: '0.8em', color: '#a0aec0', marginTop: '2px' }}>
-                        ≈ {Math.round(categoryTotals[cat.name] * exchangeRate).toLocaleString()} TWD
+                        ≈ {categoryTotals[cat.name].twd.toLocaleString()} TWD
                       </div>
                     </div>
                   )
@@ -677,17 +685,17 @@ function App() {
 
                             <div style={{ textAlign: 'left' }}>
                               <strong style={{ color: '#e53e3e', fontSize: '1.2em', display: 'block' }}>
-                                {Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{baseCurrency}</span>
+                                {Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{exp.currency || 'JPY'}</span>
                               </strong>
                               <span style={{ fontSize: '0.8em', color: '#a0aec0', display: 'block', marginTop: '-2px' }}>
-                                ≈ {Math.round(Number(exp.amount) * exchangeRate).toLocaleString()} TWD
+                                ≈ {exp.twd_amount ? Number(exp.twd_amount).toLocaleString() : '---'} TWD
                               </span>
                             </div>
                           </div>
 
                           <div style={{ display: 'flex', gap: '8px' }}>
                             <button onClick={() => { setEditingExpenseId(exp.id); setEditExpenseForm(exp); }} style={{ background: '#edf2f7', border: 'none', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>✏️</button>
-                            <button onClick={() => deleteExpense(exp.id)} style={{ background: 'none', border: 'none', color: '#fc8181', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>🗑️</button>
+                            <button onClick={() => deleteExpense(exp.id)} style={{ background: '#fff5f5', border: 'none', color: '#fc8181', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>🗑️</button>
                           </div>
                         </div>
                       </div>
