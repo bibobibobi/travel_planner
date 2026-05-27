@@ -9,6 +9,10 @@ from dotenv import load_dotenv
 import http.client
 import time
 
+# 💡 新增：密碼加密與 JWT 套件
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+
 load_dotenv()
 
 # 新增的 AI 與圖片處理套件
@@ -22,6 +26,10 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://travel_user:travel123@localhost/travel_db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# 💡 新增：JWT 密鑰設定 (建議未來把這串金鑰放到 .env 檔案裡)
+app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET_KEY", "your-super-secret-key-change-me-later")
+jwt = JWTManager(app)
+
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -29,7 +37,7 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 CORS(app)
 db = SQLAlchemy(app)
 
-# ====== 💡 新增：自動匯率 API 與 1小時快取機制 ======
+# ====== 💡 自動匯率 API 與 1小時快取機制 ======
 rate_cache = {}
 
 def get_twd_rate(base_currency):
@@ -37,7 +45,6 @@ def get_twd_rate(base_currency):
         return 1.0
     
     now = time.time()
-    # 快取有效期限：3600 秒 (1小時)。確保一個月最多只耗 720 次請求！
     if base_currency in rate_cache and (now - rate_cache[base_currency]['timestamp'] < 3600):
         return rate_cache[base_currency]['rate']
     
@@ -45,7 +52,6 @@ def get_twd_rate(base_currency):
         
     try:
         conn = http.client.HTTPSConnection("api.fxratesapi.com")
-        # 串接你的專屬 API Key，並設定 resolution=1h
         url = f"/latest?api_key={api_key}&base={base_currency}&currencies=TWD&resolution=1h&amount=1&places=4&format=json"
         conn.request("GET", url)
         res = conn.getresponse()
@@ -59,7 +65,6 @@ def get_twd_rate(base_currency):
     except Exception as e:
         print("API 匯率獲取失敗:", e)
         
-    # 若斷網或 API 異常，自動退回使用快取或預設安全值 (斷網保護)
     if base_currency in rate_cache:
         return rate_cache[base_currency]['rate']
         
@@ -68,9 +73,19 @@ def get_twd_rate(base_currency):
 
 
 # ================= 資料庫模型 =================
+
+# 💡 新增：使用者資料表
+class User(db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(256), nullable=False)
+
 class Trip(db.Model):
     __tablename__ = 'trip'
     id = db.Column(db.Integer, primary_key=True)
+    # 💡 新增：記錄這個行程是哪個使用者創建的 (設為 nullable=True 是為了不讓你原本舊的假資料壞掉)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True) 
     title = db.Column(db.String(100), nullable=False)
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
@@ -98,7 +113,7 @@ class Expense(db.Model):
     item_id = db.Column(db.Integer, db.ForeignKey('item.id'), nullable=True)
     day_number = db.Column(db.Integer, default=1)
     amount = db.Column(db.Float, nullable=False)
-    twd_amount = db.Column(db.Float, default=0) # 💡 新增：永久紀錄記帳當下的台幣金額
+    twd_amount = db.Column(db.Float, default=0) 
     currency = db.Column(db.String(10), default='JPY')
     category = db.Column(db.String(50), nullable=False)
     description = db.Column(db.Text, nullable=True)
@@ -123,6 +138,46 @@ def index():
 @app.route('/api/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# ====== 🔐 新增：註冊與登入 API ======
+@app.route('/api/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+
+    if not email or not password:
+        return jsonify({"error": "請提供 Email 與密碼"}), 400
+
+    if User.query.filter_by(email=email).first():
+        return jsonify({"error": "這個 Email 已經註冊過囉！"}), 400
+
+    hashed_password = generate_password_hash(password)
+    new_user = User(email=email, password_hash=hashed_password)
+    
+    db.session.add(new_user)
+    db.session.commit()
+
+    return jsonify({"message": "註冊成功！"}), 201
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+
+    user = User.query.filter_by(email=email).first()
+
+    if not user or not check_password_hash(user.password_hash, password):
+        return jsonify({"error": "帳號或密碼錯誤"}), 401
+
+    # 登入成功，將使用者的 ID 包裝進 JWT Token 中發放
+    access_token = create_access_token(identity=str(user.id))
+    
+    return jsonify({
+        "message": "登入成功！",
+        "access_token": access_token
+    }), 200
 
 # ====== 🤖 核心功能：AI 掃描發票 API ======
 @app.route('/api/scan-receipt', methods=['POST'])
@@ -176,16 +231,39 @@ def scan_receipt():
         return jsonify({"error": f"後端真實錯誤: {str(e)}"}), 500
 
 # --- 其餘 API 路由 ---
+# ====== 💡 修改：加上 JWT 警衛，並過濾專屬使用者的行程 ======
 @app.route('/api/trips', methods=['GET', 'POST'])
+@jwt_required() # 💂‍♂️ 警衛在這裡！沒有帶 Token 的請求會直接被踢出去
 def handle_trips():
+    # 取得當前拿著這張 Token 登入的使用者 ID
+    current_user_id = get_jwt_identity() 
+
     if request.method == 'POST':
         data = request.get_json()
         budget_val = int(data.get('budget')) if data.get('budget') not in ["", None] else 0
-        new_trip = Trip(title=data.get('title'), start_date=datetime.strptime(data.get('start_date'), "%Y-%m-%d").date(), end_date=datetime.strptime(data.get('end_date'), "%Y-%m-%d").date(), budget=budget_val)
+        
+        # 💡 新增時，把 user_id 烙印在這個行程上
+        new_trip = Trip(
+            user_id=current_user_id, 
+            title=data.get('title'), 
+            start_date=datetime.strptime(data.get('start_date'), "%Y-%m-%d").date(), 
+            end_date=datetime.strptime(data.get('end_date'), "%Y-%m-%d").date(), 
+            budget=budget_val
+        )
         db.session.add(new_trip)
         db.session.commit()
         return jsonify({"status": "success", "id": new_trip.id}), 201
-    return jsonify([{"id": t.id, "title": t.title, "start_date": t.start_date.strftime("%Y-%m-%d"), "end_date": t.end_date.strftime("%Y-%m-%d"), "budget": t.budget} for t in Trip.query.all()])
+        
+    # 💡 查詢時，只撈取「擁有者是自己」的行程，不再是 query.all() 了！
+    user_trips = Trip.query.filter_by(user_id=current_user_id).all()
+    
+    return jsonify([{
+        "id": t.id, 
+        "title": t.title, 
+        "start_date": t.start_date.strftime("%Y-%m-%d"), 
+        "end_date": t.end_date.strftime("%Y-%m-%d"), 
+        "budget": t.budget
+    } for t in user_trips])
 
 @app.route('/api/trips/<int:trip_id>', methods=['PUT', 'DELETE'])
 def modify_trip(trip_id):
@@ -259,7 +337,6 @@ def handle_expenses():
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
 
-        # 💡 自動呼叫 API 換算成台幣並存入資料庫
         rate = get_twd_rate(currency)
         twd_amount = round(float(amount) * rate)
 
@@ -274,7 +351,6 @@ def handle_expenses():
 
     trip_id = request.args.get('trip_id')
     expenses = Expense.query.filter_by(trip_id=trip_id).order_by(Expense.id.desc()).all()
-    # 回傳時包含永久紀錄的 twd_amount 和 currency
     return jsonify([{
         "id": str(exp.id), "amount": exp.amount, "twd_amount": getattr(exp, 'twd_amount', 0), 
         "currency": exp.currency, "category": exp.category, "description": exp.description, 
@@ -299,7 +375,6 @@ def handle_single_expense(exp_id):
         exp.currency = data['currency']
         recalculate = True
         
-    # 💡 編輯時如果改了金額或幣別，重新換算台幣
     if recalculate:
         rate = get_twd_rate(exp.currency)
         exp.twd_amount = round(exp.amount * rate)

@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
+// 💡 新增：引入我們剛剛做好的登入元件
+import Auth from './Auth'
 import './App.css'
 
-const API_BASE = '/api'
+const BASE_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE = `${BASE_URL}/api`;
 
 const ITEM_CATEGORIES = [
   { name: '景點', icon: '📸', color: '#3182ce', bg: '#ebf8ff' },
@@ -32,6 +35,9 @@ const CURRENCY_OPTIONS = [
 ];
 
 function App() {
+  // 💡 新增：登入狀態管理
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+
   const [trips, setTrips] = useState([])
   const [currentTrip, setCurrentTrip] = useState(null)
   const [editingLobbyTripId, setEditingLobbyTripId] = useState(null)
@@ -60,13 +66,38 @@ function App() {
   const [receiptModalData, setReceiptModalData] = useState(null);
   const [isReceiptModalForPreview, setIsReceiptModalForPreview] = useState(false);
 
-  // 💡 前端只負責記憶使用者當前想用的「預設外幣」，不處理匯率了
   const [baseCurrency, setBaseCurrency] = useState(() => localStorage.getItem('travelBaseCurrency') || 'JPY');
+
   useEffect(() => localStorage.setItem('travelBaseCurrency', baseCurrency), [baseCurrency]);
+
+  // 💡 新增：網頁載入時檢查是否已經有 Token
+  useEffect(() => {
+    const token = localStorage.getItem('travel_token');
+    if (token) {
+      setIsLoggedIn(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (expenseFilterDay !== 0) setNewExpense(prev => ({ ...prev, day_number: expenseFilterDay }));
   }, [expenseFilterDay]);
+
+  // 💡 新增：自動取得 Token 並組合 Headers 的小幫手
+  const getAuthHeaders = (isFormData = false) => {
+    const token = localStorage.getItem('travel_token');
+    const headers = { 'Authorization': `Bearer ${token}` };
+    if (!isFormData) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return headers;
+  };
+
+  // 💡 新增：登出功能
+  const handleLogout = () => {
+    localStorage.removeItem('travel_token');
+    setIsLoggedIn(false);
+    setCurrentTrip(null);
+  };
 
   const getTripDays = (start, end) => {
     const d1 = new Date(start); const d2 = new Date(end);
@@ -80,25 +111,26 @@ function App() {
     return `${date.getMonth() + 1}/${date.getDate()}`;
   }
 
-  useEffect(() => { fetchTrips() }, [])
-  const fetchTrips = () => fetch(`${API_BASE}/trips`).then(res => res.json()).then(data => setTrips(Array.isArray(data) ? data : []))
+  // 💡 修改：所有的 fetch 都加上了 headers: getAuthHeaders()
+  useEffect(() => { if (isLoggedIn) fetchTrips() }, [isLoggedIn])
+  const fetchTrips = () => fetch(`${API_BASE}/trips`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setTrips(Array.isArray(data) ? data : []))
   const selectTrip = (trip) => { setCurrentTrip(trip); setSelectedDay(1); setExpenseFilterDay(0); fetchItems(trip.id); fetchExpenses(trip.id); fetchShopping(trip.id); }
-  const fetchItems = (tripId) => fetch(`${API_BASE}/items?trip_id=${tripId}`).then(res => res.json()).then(data => setItems(Array.isArray(data) ? data : []))
-  const fetchExpenses = (tripId) => fetch(`${API_BASE}/expenses?trip_id=${tripId}`).then(res => res.json()).then(data => setExpenses(Array.isArray(data) ? data : []))
-  const fetchShopping = (tripId) => fetch(`${API_BASE}/shopping?trip_id=${tripId}`).then(res => res.json()).then(data => setShoppingItems(Array.isArray(data) ? data : []))
+  const fetchItems = (tripId) => fetch(`${API_BASE}/items?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setItems(Array.isArray(data) ? data : []))
+  const fetchExpenses = (tripId) => fetch(`${API_BASE}/expenses?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setExpenses(Array.isArray(data) ? data : []))
+  const fetchShopping = (tripId) => fetch(`${API_BASE}/shopping?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setShoppingItems(Array.isArray(data) ? data : []))
 
-  const handleCreateTrip = (e) => { e.preventDefault(); fetch(`${API_BASE}/trips`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newTripForm) }).then(() => { fetchTrips(); setNewTripForm({ title: '', start_date: '', end_date: '', budget: '' }) }) }
+  const handleCreateTrip = (e) => { e.preventDefault(); fetch(`${API_BASE}/trips`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(newTripForm) }).then(() => { fetchTrips(); setNewTripForm({ title: '', start_date: '', end_date: '', budget: '' }) }) }
   const startEditingLobbyTrip = (trip, e) => { e.stopPropagation(); setEditingLobbyTripId(trip.id); setLobbyEditForm(trip) }
-  const handleUpdateLobbyTrip = (e) => { e.preventDefault(); fetch(`${API_BASE}/trips/${editingLobbyTripId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lobbyEditForm) }).then(() => { fetchTrips(); setEditingLobbyTripId(null); }) }
-  const handleDeleteTrip = (id, e) => { e.stopPropagation(); if (window.confirm("確定要刪除整個行程嗎？")) { fetch(`${API_BASE}/trips/${id}`, { method: 'DELETE' }).then(() => fetchTrips()) } }
+  const handleUpdateLobbyTrip = (e) => { e.preventDefault(); fetch(`${API_BASE}/trips/${editingLobbyTripId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(lobbyEditForm) }).then(() => { fetchTrips(); setEditingLobbyTripId(null); }) }
+  const handleDeleteTrip = (id, e) => { e.stopPropagation(); if (window.confirm("確定要刪除整個行程嗎？")) { fetch(`${API_BASE}/trips/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchTrips()) } }
 
   const handleAddItem = (e) => {
     e.preventDefault(); if (!newItemForm.content) return;
     const orderIndex = items.filter(i => i.day_number === selectedDay).length;
-    fetch(`${API_BASE}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trip_id: currentTrip.id, day_number: selectedDay, order_index: orderIndex, ...newItemForm }) }).then(() => { fetchItems(currentTrip.id); setNewItemForm({ content: '', start_time: '', map_url: '', memo: '', category: '景點' }); })
+    fetch(`${API_BASE}/items`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ trip_id: currentTrip.id, day_number: selectedDay, order_index: orderIndex, ...newItemForm }) }).then(() => { fetchItems(currentTrip.id); setNewItemForm({ content: '', start_time: '', map_url: '', memo: '', category: '景點' }); })
   }
-  const saveEditedItem = () => fetch(`${API_BASE}/items/${editingItemId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editItemForm) }).then(() => { fetchItems(currentTrip.id); setEditingItemId(null) })
-  const deleteItem = (id) => { if (window.confirm("確定要刪除這個景點嗎？")) { fetch(`${API_BASE}/items/${id}`, { method: 'DELETE' }).then(() => fetchItems(currentTrip.id)) } }
+  const saveEditedItem = () => fetch(`${API_BASE}/items/${editingItemId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editItemForm) }).then(() => { fetchItems(currentTrip.id); setEditingItemId(null) })
+  const deleteItem = (id) => { if (window.confirm("確定要刪除這個景點嗎？")) { fetch(`${API_BASE}/items/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchItems(currentTrip.id)) } }
 
   const compressImage = (file) => {
     return new Promise((resolve) => {
@@ -120,11 +152,11 @@ function App() {
     const formData = new FormData();
     formData.append('trip_id', currentTrip.id); formData.append('name', newShopForm.name); formData.append('location', newShopForm.location);
     if (newShopForm.item_image) { const compressed = await compressImage(newShopForm.item_image); formData.append('item_image', compressed); }
-    fetch(`${API_BASE}/shopping`, { method: 'POST', body: formData }).then(() => { fetchShopping(currentTrip.id); setNewShopForm({ name: '', location: '', item_image: null }); document.getElementById('shop-upload').value = ''; })
+    fetch(`${API_BASE}/shopping`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(() => { fetchShopping(currentTrip.id); setNewShopForm({ name: '', location: '', item_image: null }); document.getElementById('shop-upload').value = ''; })
   }
-  const toggleBoughtStatus = (item) => { fetch(`${API_BASE}/shopping/${item.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_bought: !item.is_bought }) }).then(() => fetchShopping(currentTrip.id)) }
-  const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
-  const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE' }).then(() => fetchShopping(currentTrip.id)) } }
+  const toggleBoughtStatus = (item) => { fetch(`${API_BASE}/shopping/${item.id}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ is_bought: !item.is_bought }) }).then(() => fetchShopping(currentTrip.id)) }
+  const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
+  const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchShopping(currentTrip.id)) } }
 
   const handleAIScan = async (e) => {
     const file = e.target.files[0];
@@ -134,7 +166,7 @@ function App() {
       const compressed = await compressImage(file);
       const formData = new FormData();
       formData.append('receipt_image', compressed);
-      const res = await fetch(`${API_BASE}/scan-receipt`, { method: 'POST', body: formData });
+      const res = await fetch(`${API_BASE}/scan-receipt`, { method: 'POST', headers: getAuthHeaders(true), body: formData });
       if (!res.ok) throw new Error("伺服器辨識失敗");
       const aiData = await res.json();
 
@@ -162,42 +194,41 @@ function App() {
     }
   }
 
-  // 💡 把所選的外幣幣別送到後端，後端會負責抓 API 轉換台幣並鎖定寫入
   const handleConfirmAIExpense = () => {
     const formData = new FormData();
     formData.append('trip_id', currentTrip.id);
     formData.append('amount', receiptModalData.amount);
-    formData.append('currency', baseCurrency); // 傳送當前選擇的幣別給後端
+    formData.append('currency', baseCurrency);
     formData.append('category', receiptModalData.category);
     formData.append('description', JSON.stringify(receiptModalData.receipt_details));
     formData.append('day_number', receiptModalData.autoDayNumber);
     if (receiptModalData.receipt_image) formData.append('receipt_image', receiptModalData.receipt_image);
 
-    fetch(`${API_BASE}/expenses`, { method: 'POST', body: formData }).then(() => { fetchExpenses(currentTrip.id); setReceiptModalData(null); });
+    fetch(`${API_BASE}/expenses`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(() => { fetchExpenses(currentTrip.id); setReceiptModalData(null); });
   }
 
   const handleAddExpense = async (e) => {
     e.preventDefault(); if (!newExpense.amount) return;
     const formData = new FormData();
-    formData.append('trip_id', currentTrip.id); 
-    formData.append('amount', newExpense.amount); 
-    formData.append('currency', baseCurrency); 
-    formData.append('category', newExpense.category); 
+    formData.append('trip_id', currentTrip.id);
+    formData.append('amount', newExpense.amount);
+    formData.append('currency', baseCurrency);
+    formData.append('category', newExpense.category);
     formData.append('description', newExpense.description);
     formData.append('day_number', newExpense.day_number);
     if (newExpense.receipt_image) { const compressed = await compressImage(newExpense.receipt_image); formData.append('receipt_image', compressed); }
-    
-    fetch(`${API_BASE}/expenses`, { method: 'POST', body: formData }).then(() => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', day_number: expenseFilterDay === 0 ? 1 : expenseFilterDay, receipt_image: null }); document.getElementById('receipt-upload').value = ''; })
+
+    fetch(`${API_BASE}/expenses`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(() => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', day_number: expenseFilterDay === 0 ? 1 : expenseFilterDay, receipt_image: null }); document.getElementById('receipt-upload').value = ''; })
   }
 
   const saveEditedExpense = () => {
     fetch(`${API_BASE}/expenses/${editingExpenseId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      method: 'PUT', headers: getAuthHeaders(),
       body: JSON.stringify(editExpenseForm)
     }).then(() => { fetchExpenses(currentTrip.id); setEditingExpenseId(null); });
   }
 
-  const deleteExpense = (id) => { if (window.confirm("確定刪除這筆花費？")) { fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE' }).then(() => fetchExpenses(currentTrip.id)) } }
+  const deleteExpense = (id) => { if (window.confirm("確定刪除這筆花費？")) { fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchExpenses(currentTrip.id)) } }
 
   const onDragEnd = (result) => {
     const { source, destination } = result; if (!destination) return;
@@ -209,21 +240,19 @@ function App() {
     dItems.splice(destination.index, 0, moved);
     const payload = [...sItems.map((it, idx) => ({ id: it.id, order_index: idx, day_number: sDay })), ...dItems.map((it, idx) => ({ id: it.id, order_index: idx, day_number: dDay }))];
     setItems(items.map(it => { const up = payload.find(p => p.id === it.id); return up ? { ...it, ...up } : it; }));
-    fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reordered_items: payload }) });
+    fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ reordered_items: payload }) });
   }
 
   const filteredExpenses = Array.isArray(expenses)
     ? (expenseFilterDay === 0 ? expenses : expenses.filter(exp => exp.day_number === expenseFilterDay))
     : [];
 
-  // 💡 直接讀取資料庫回傳的真實台幣價值！
   const totalBaseExpense = filteredExpenses
     .filter(e => (e.currency || 'JPY') === baseCurrency)
     .reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
-    
+
   const totalTwdExpense = filteredExpenses.reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0);
 
-  // 在行程看板也顯示真實的台幣加總
   const getDailyTotalTwdExpense = (day) => {
     return Array.isArray(expenses) ? expenses.filter(e => e.day_number === day).reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0) : 0;
   };
@@ -354,11 +383,22 @@ function App() {
     )
   }
 
+  // 💡 新增：如果不處於登入狀態，直接回傳 Auth 元件來擋住後面的畫面
+  if (!isLoggedIn) {
+    return <Auth onLoginSuccess={() => setIsLoggedIn(true)} />;
+  }
+
   if (!currentTrip) {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', fontFamily: '"Segoe UI", sans-serif' }}>
         <div style={{ width: '100%', maxWidth: '600px', backgroundColor: '#ffffff', padding: '30px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
-          <h1 style={{ textAlign: 'center', color: '#1a365d', marginBottom: '30px', fontSize: '1.8em', fontWeight: 600 }}>✈️ 我的旅遊管理大廳</h1>
+
+          {/* 💡 修改：大廳頂部加入登出按鈕 */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
+            <h1 style={{ margin: 0, color: '#1a365d', fontSize: '1.8em', fontWeight: 600 }}>✈️ 我的旅遊管理大廳</h1>
+            <button onClick={handleLogout} style={{ padding: '8px 16px', backgroundColor: '#f56565', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '15px' }}>登出</button>
+          </div>
+
           <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '12px', marginBottom: '30px', border: '1px solid #e2e8f0', boxSizing: 'border-box' }}>
             <h3 style={{ marginTop: 0, color: '#2b6cb0', fontWeight: 600 }}>➕ 建立新行程</h3>
             <form onSubmit={handleCreateTrip} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -494,15 +534,15 @@ function App() {
         {/* 行程分頁區塊 */}
         {activeTab === 'itinerary' && (
           <><form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px', backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)', boxSizing: 'border-box' }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                <select value={selectedDay} onChange={e => setSelectedDay(Number(e.target.value))} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: 600, color: '#2d3748', backgroundColor: '#f8fafc', flex: '1 1 100px', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}><option value={0}>✨ 願望清單</option>{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>第 {day} 天</option>))}</select>
-                <select value={newItemForm.category} onChange={e => setNewItemForm({ ...newItemForm, category: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', flex: '1 1 100px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
-                <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 10px', flex: '1 1 120px', boxSizing: 'border-box' }}><span>🕒</span><input type="time" value={newItemForm.start_time} onChange={e => setNewItemForm({ ...newItemForm, start_time: e.target.value })} style={{ border: 'none', outline: 'none', padding: '12px 5px', width: '100%', backgroundColor: 'transparent', fontSize: '16px', boxSizing: 'border-box' }} /></div>
-              </div>
-              <input type="text" placeholder="想去的景點..." value={newItemForm.content} onChange={e => setNewItemForm({ ...newItemForm, content: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-              <input type="url" placeholder="Google Map 連結 (選填)" value={newItemForm.map_url} onChange={e => setNewItemForm({ ...newItemForm, map_url: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-              <button type="submit" style={{ padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>＋ 加入</button>
-            </form><DragDropContext onDragEnd={onDragEnd}><div style={{ display: 'flex', flexDirection: 'column' }}>{renderDayColumn(0, '✨ 願望清單')}{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => renderDayColumn(day))}</div></DragDropContext></>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+              <select value={selectedDay} onChange={e => setSelectedDay(Number(e.target.value))} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: 600, color: '#2d3748', backgroundColor: '#f8fafc', flex: '1 1 100px', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}><option value={0}>✨ 願望清單</option>{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>第 {day} 天</option>))}</select>
+              <select value={newItemForm.category} onChange={e => setNewItemForm({ ...newItemForm, category: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', flex: '1 1 100px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
+              <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0 10px', flex: '1 1 120px', boxSizing: 'border-box' }}><span>🕒</span><input type="time" value={newItemForm.start_time} onChange={e => setNewItemForm({ ...newItemForm, start_time: e.target.value })} style={{ border: 'none', outline: 'none', padding: '12px 5px', width: '100%', backgroundColor: 'transparent', fontSize: '16px', boxSizing: 'border-box' }} /></div>
+            </div>
+            <input type="text" placeholder="想去的景點..." value={newItemForm.content} onChange={e => setNewItemForm({ ...newItemForm, content: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+            <input type="url" placeholder="Google Map 連結 (選填)" value={newItemForm.map_url} onChange={e => setNewItemForm({ ...newItemForm, map_url: e.target.value })} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+            <button type="submit" style={{ padding: '12px', backgroundColor: '#38b2ac', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>＋ 加入</button>
+          </form><DragDropContext onDragEnd={onDragEnd}><div style={{ display: 'flex', flexDirection: 'column' }}>{renderDayColumn(0, '✨ 願望清單')}{Array.from({ length: totalDays }, (_, i) => i + 1).map(day => renderDayColumn(day))}</div></DragDropContext></>
         )}
 
         {/* 購物分頁區塊 */}
@@ -557,7 +597,6 @@ function App() {
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
 
-            {/* 💡 直接拔掉外層的「匯率輸入框」與「刷新按鈕」，完全做到 Zero UI */}
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', flexWrap: 'wrap', gap: '15px', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ flex: '1 1 min-content' }}>
                 <h2 style={{ margin: '0 0 12px 0', color: '#c53030', fontWeight: 600, whiteSpace: 'nowrap' }}>目前總花費</h2>
