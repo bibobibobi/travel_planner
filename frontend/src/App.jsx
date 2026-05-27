@@ -32,7 +32,6 @@ function App() {
   const [isReceiptModalForPreview, setIsReceiptModalForPreview] = useState(false);
   const [baseCurrency, setBaseCurrency] = useState(() => localStorage.getItem('travelBaseCurrency') || 'JPY');
 
-  // ====== 💡 新增：分享專用的狀態 ======
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareRole, setShareRole] = useState('viewer');
   const [shareLink, setShareLink] = useState('');
@@ -43,14 +42,11 @@ function App() {
   const BASE_URL = import.meta.env.VITE_API_URL || '';
   const API_BASE = `${BASE_URL}/api`;
 
-  // ====== 💡 新增：網頁剛載入時，先攔截網址上的 token ======
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tokenFromUrl = params.get('share_token');
     if (tokenFromUrl) {
-      // 把它偷偷存進 sessionStorage (即使重新整理也不會不見)
       sessionStorage.setItem('pending_share_token', tokenFromUrl);
-      // 把網址列清乾淨，這樣看起來比較漂亮
       window.history.replaceState({}, document.title, window.location.pathname);
     }
 
@@ -75,8 +71,7 @@ function App() {
     setCurrentTrip(null);
   };
 
-  // ====== 💡 修改：登入成功後，檢查有沒有「待處理的分享邀請」 ======
-  useEffect(() => {
+  useEffect(() => { 
     if (isLoggedIn) {
       const pendingToken = sessionStorage.getItem('pending_share_token');
       if (pendingToken) {
@@ -85,14 +80,14 @@ function App() {
           headers: getAuthHeaders(),
           body: JSON.stringify({ share_token: pendingToken })
         })
-          .then(res => res.json())
-          .then(data => {
-            if (data.error) alert(data.error);
-            else alert(`${data.message} 您的權限為：${data.role === 'editor' ? '可編輯' : '僅檢視'}`);
-
-            sessionStorage.removeItem('pending_share_token');
-            fetchTrips(); // 重新撈取，就會看到新加入的行程
-          });
+        .then(res => res.json())
+        .then(data => {
+          if (data.error) alert(data.error);
+          else alert(`${data.message} 您的權限為：${data.role === 'editor' ? '可編輯' : '僅檢視'}`);
+          
+          sessionStorage.removeItem('pending_share_token');
+          fetchTrips(); 
+        });
       } else {
         fetchTrips();
       }
@@ -105,23 +100,21 @@ function App() {
   const fetchExpenses = (tripId) => fetch(`${API_BASE}/expenses?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setExpenses(Array.isArray(data) ? data : []))
   const fetchShopping = (tripId) => fetch(`${API_BASE}/shopping?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setShoppingItems(Array.isArray(data) ? data : []))
 
-  // ====== 💡 核心權限開關：判斷當前使用者可不可以編輯 ======
   const canEdit = currentTrip && (currentTrip.role === 'owner' || currentTrip.role === 'editor');
 
-  // ====== 💡 新增：產生分享連結與複製功能 ======
   const handleGenerateShareLink = () => {
     fetch(`${API_BASE}/trips/generate-share`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ trip_id: currentTrip.id, role: shareRole })
     })
-      .then(res => res.json())
-      .then(data => {
-        if (data.error) return alert(data.error);
-        const fullUrl = `${window.location.origin}/?share_token=${data.share_token}`;
-        setShareLink(fullUrl);
-        setIsCopied(false);
-      });
+    .then(res => res.json())
+    .then(data => {
+      if(data.error) return alert(data.error);
+      const fullUrl = `${window.location.origin}/?share_token=${data.share_token}`;
+      setShareLink(fullUrl);
+      setIsCopied(false);
+    });
   };
 
   const handleCopyLink = () => {
@@ -130,8 +123,6 @@ function App() {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-
-  // ... (其餘 CRUD 處理邏輯保持不變)
   const getTripDays = (start, end) => { const d1 = new Date(start); const d2 = new Date(end); return (Math.ceil(Math.abs(d2 - d1) / (1000 * 60 * 60 * 24)) + 1) || 1 }
   const totalDays = currentTrip ? getTripDays(currentTrip.start_date, currentTrip.end_date) : 1
   const getDisplayDate = (startDate, dayNumber) => { if (!startDate || dayNumber === 0) return ''; const date = new Date(startDate + 'T00:00:00'); date.setDate(date.getDate() + dayNumber - 1); return `${date.getMonth() + 1}/${date.getDate()}`; }
@@ -148,7 +139,7 @@ function App() {
   const compressImage = (file) => { return new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = (event) => { const img = new Image(); img.src = event.target.result; img.onload = () => { const MAX_WIDTH = 800; const ratio = MAX_WIDTH / img.width; const canvas = document.createElement('canvas'); canvas.width = MAX_WIDTH; canvas.height = img.height * ratio; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, canvas.width, canvas.height); canvas.toBlob((blob) => { resolve(new File([blob], file.name, { type: 'image/jpeg' })); }, 'image/jpeg', 0.7); }; }; }); };
 
   const handleAddShop = async (e) => { e.preventDefault(); if (!newShopForm.name) return; const formData = new FormData(); formData.append('trip_id', currentTrip.id); formData.append('name', newShopForm.name); formData.append('location', newShopForm.location); if (newShopForm.item_image) { const compressed = await compressImage(newShopForm.item_image); formData.append('item_image', compressed); } fetch(`${API_BASE}/shopping`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(() => { fetchShopping(currentTrip.id); setNewShopForm({ name: '', location: '', item_image: null }); document.getElementById('shop-upload').value = ''; }) }
-  const toggleBoughtStatus = (item) => { if (!canEdit) return; fetch(`${API_BASE}/shopping/${item.id}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ is_bought: !item.is_bought }) }).then(() => fetchShopping(currentTrip.id)) }
+  const toggleBoughtStatus = (item) => { if(!canEdit) return; fetch(`${API_BASE}/shopping/${item.id}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ is_bought: !item.is_bought }) }).then(() => fetchShopping(currentTrip.id)) }
   const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
   const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchShopping(currentTrip.id)) } }
 
@@ -158,11 +149,11 @@ function App() {
   const saveEditedExpense = () => { fetch(`${API_BASE}/expenses/${editingExpenseId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editExpenseForm) }).then(() => { fetchExpenses(currentTrip.id); setEditingExpenseId(null); }); }
   const deleteExpense = (id) => { if (window.confirm("確定刪除這筆花費？")) { fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchExpenses(currentTrip.id)) } }
 
-  const onDragEnd = (result) => { if (!canEdit) return; const { source, destination } = result; if (!destination) return; const sDay = parseInt(source.droppableId.split('-')[1]); const dDay = parseInt(destination.droppableId.split('-')[1]); let newItems = Array.from(items); const sItems = newItems.filter(i => i.day_number === sDay).sort((a, b) => a.order_index - b.order_index); const [moved] = sItems.splice(source.index, 1); moved.day_number = dDay; const dItems = sDay === dDay ? sItems : newItems.filter(i => i.day_number === dDay).sort((a, b) => a.order_index - b.order_index); dItems.splice(destination.index, 0, moved); const payload = [...sItems.map((it, idx) => ({ id: it.id, order_index: idx, day_number: sDay })), ...dItems.map((it, idx) => ({ id: it.id, order_index: idx, day_number: dDay }))]; setItems(items.map(it => { const up = payload.find(p => p.id === it.id); return up ? { ...it, ...up } : it; })); fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ reordered_items: payload }) }); }
+  const onDragEnd = (result) => { if(!canEdit) return; const { source, destination } = result; if (!destination) return; const sDay = parseInt(source.droppableId.split('-')[1]); const dDay = parseInt(destination.droppableId.split('-')[1]); let newItems = Array.from(items); const sItems = newItems.filter(i => i.day_number === sDay).sort((a, b) => a.order_index - b.order_index); const [moved] = sItems.splice(source.index, 1); moved.day_number = dDay; const dItems = sDay === dDay ? sItems : newItems.filter(i => i.day_number === dDay).sort((a, b) => a.order_index - b.order_index); dItems.splice(destination.index, 0, moved); const payload = [...sItems.map((it, idx) => ({ id: it.id, order_index: idx, day_number: sDay })), ...dItems.map((it, idx) => ({ id: it.id, order_index: idx, day_number: dDay }))]; setItems(items.map(it => { const up = payload.find(p => p.id === it.id); return up ? { ...it, ...up } : it; })); fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ reordered_items: payload }) }); }
 
-  const ITEM_CATEGORIES = [{ name: '景點', icon: '📸', color: '#3182ce', bg: '#ebf8ff' }, { name: '食物', icon: '🍔', color: '#c53030', bg: '#fff5f5' }, { name: '住宿', icon: '🛏️', color: '#805ad5', bg: '#faf5ff' }, { name: '逛街', icon: '🛍️', color: '#dd6b20', bg: '#fffff0' }, { name: '交通', icon: '🚗', color: '#38a169', bg: '#e6fffa' }, { name: '其他', icon: '❓', color: '#718096', bg: '#f7fafc' }];
-  const EXPENSE_CATEGORIES = [{ name: '飲食', icon: '🍔' }, { name: '交通', icon: '🚗' }, { name: '購物', icon: '🛍️' }, { name: '住宿', icon: '🛏️' }, { name: '其他', icon: '❓' }];
-  const CURRENCY_OPTIONS = [{ code: 'JPY', label: 'JPY (日圓)' }, { code: 'KRW', label: 'KRW (韓元)' }, { code: 'THB', label: 'THB (泰銖)' }, { code: 'USD', label: 'USD (美元)' }, { code: 'EUR', label: 'EUR (歐元)' }, { code: 'VND', label: 'VND (越南盾)' }, { code: 'TWD', label: 'TWD (台幣)' },];
+  const ITEM_CATEGORIES = [ { name: '景點', icon: '📸', color: '#3182ce', bg: '#ebf8ff' }, { name: '食物', icon: '🍔', color: '#c53030', bg: '#fff5f5' }, { name: '住宿', icon: '🛏️', color: '#805ad5', bg: '#faf5ff' }, { name: '逛街', icon: '🛍️', color: '#dd6b20', bg: '#fffff0' }, { name: '交通', icon: '🚗', color: '#38a169', bg: '#e6fffa' }, { name: '其他', icon: '❓', color: '#718096', bg: '#f7fafc' } ];
+  const EXPENSE_CATEGORIES = [ { name: '飲食', icon: '🍔' }, { name: '交通', icon: '🚗' }, { name: '購物', icon: '🛍️' }, { name: '住宿', icon: '🛏️' }, { name: '其他', icon: '❓' } ];
+  const CURRENCY_OPTIONS = [ { code: 'JPY', label: 'JPY (日圓)' }, { code: 'KRW', label: 'KRW (韓元)' }, { code: 'THB', label: 'THB (泰銖)' }, { code: 'USD', label: 'USD (美元)' }, { code: 'EUR', label: 'EUR (歐元)' }, { code: 'VND', label: 'VND (越南盾)' }, { code: 'TWD', label: 'TWD (台幣)' }, ];
 
   const filteredExpenses = Array.isArray(expenses) ? (expenseFilterDay === 0 ? expenses : expenses.filter(exp => exp.day_number === expenseFilterDay)) : [];
   const totalBaseExpense = filteredExpenses.filter(e => (e.currency || 'JPY') === baseCurrency).reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
@@ -170,7 +161,7 @@ function App() {
   const getDailyTotalTwdExpense = (day) => { return Array.isArray(expenses) ? expenses.filter(e => e.day_number === day).reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0) : 0; };
   const categoryTotals = filteredExpenses.reduce((acc, exp) => { const cat = exp.category || '其他'; acc[cat] = acc[cat] || { amount: 0, twd: 0 }; acc[cat].amount += (Number(exp.amount) || 0); acc[cat].twd += (Number(exp.twd_amount) || 0); return acc; }, {});
 
-  const getTabStyle = (tabName) => ({ padding: '8px 14px', backgroundColor: activeTab === tabName ? (tabName === 'itinerary' ? '#e6fffa' : tabName === 'shopping' ? '#ebf8ff' : '#fff5f5') : 'transparent', color: activeTab === tabName ? (tabName === 'itinerary' ? '#319795' : tabName === 'shopping' ? '#2b6cb0' : '#e53e3e') : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '16px' });
+  const getTabStyle = (tabName) => ({ padding: '8px 14px', backgroundColor: activeTab === tabName ? (tabName === 'itinerary' ? '#e6fffa' : tabName === 'shopping' ? '#ebf8ff' : '#fff5f5') : 'transparent', color: activeTab === tabName ? (tabName === 'itinerary' ? '#319795' : tabName === 'shopping' ? '#2b6cb0' : '#e53e3e') : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '16px', transition: 'background 0.2s' });
 
   const renderSmartDescription = (exp) => {
     const desc = exp.description;
@@ -235,7 +226,6 @@ function App() {
                                 {item.start_time && <span style={{ fontSize: '0.85em', fontWeight: 600, background: '#f0f4f8', color: '#4a5568', padding: '2px 6px', borderRadius: '4px' }}>{item.start_time}</span>}
                                 <strong style={{ fontSize: '1.1em', color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{item.content}</strong>
                               </div>
-                              {/* 💡 只有可以編輯的人才看得到操作按鈕 */}
                               {canEdit && (
                                 <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
                                   {item.map_url && <a href={item.map_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '0.9rem', padding: '10px' }}>📍</a>}
@@ -268,7 +258,7 @@ function App() {
     return (
       <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', fontFamily: '"Segoe UI", sans-serif' }}>
         <div style={{ width: '100%', maxWidth: '600px', backgroundColor: '#ffffff', padding: '30px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
-
+          
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
             <h1 style={{ margin: 0, color: '#1a365d', fontSize: '1.8em', fontWeight: 600 }}>✈️ 我的旅遊大廳</h1>
             <button onClick={handleLogout} style={{ padding: '8px 16px', backgroundColor: '#f56565', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '15px' }}>登出</button>
@@ -303,12 +293,10 @@ function App() {
                 <>
                   <div>
                     <strong style={{ fontSize: '1.2em', color: '#2d3748' }}>{trip.title}</strong>
-                    {/* 💡 加上權限標籤 */}
                     {trip.role === 'editor' && <span style={{ marginLeft: '10px', fontSize: '0.7em', backgroundColor: '#ebf8ff', color: '#3182ce', padding: '2px 6px', borderRadius: '4px' }}>📝 可編輯</span>}
                     {trip.role === 'viewer' && <span style={{ marginLeft: '10px', fontSize: '0.7em', backgroundColor: '#edf2f7', color: '#718096', padding: '2px 6px', borderRadius: '4px' }}>👁️ 僅檢視</span>}
                     <br /><small style={{ color: '#718096' }}>📅 {trip.start_date} ~ {trip.end_date}</small>
                   </div>
-                  {/* 💡 只有擁有者可以在大廳刪除/改名 */}
                   {trip.role === 'owner' && (
                     <div style={{ display: 'flex', gap: '2px' }}>
                       <button onClick={(e) => startEditingLobbyTrip(trip, e)} style={{ background: 'none', border: 'none', fontSize: '0.9rem', cursor: 'pointer', outline: 'none', padding: '10px' }}>✏️</button>
@@ -327,20 +315,20 @@ function App() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f0f4f8', fontFamily: '"Segoe UI", sans-serif', position: 'relative' }}>
 
-      {/* ====== 💡 新增：分享專屬的彈窗 ====== */}
+      {/* 分享專屬彈窗 */}
       {shareModalOpen && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ backgroundColor: '#fff', padding: '30px', borderRadius: '16px', width: '90%', maxWidth: '400px', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
             <h3 style={{ marginTop: 0, color: '#2d3748' }}>🔗 分享此行程</h3>
             <p style={{ color: '#718096', fontSize: '0.9em' }}>選擇分享權限，並將連結傳送給朋友：</p>
-
+            
             <div style={{ display: 'flex', gap: '15px', margin: '20px 0' }}>
               <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                <input type="radio" value="viewer" checked={shareRole === 'viewer'} onChange={() => setShareRole('viewer')} style={{ marginRight: '5px' }} />
+                <input type="radio" value="viewer" checked={shareRole === 'viewer'} onChange={() => setShareRole('viewer')} style={{ marginRight: '5px' }}/>
                 👁️ 僅檢視
               </label>
               <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                <input type="radio" value="editor" checked={shareRole === 'editor'} onChange={() => setShareRole('editor')} style={{ marginRight: '5px' }} />
+                <input type="radio" value="editor" checked={shareRole === 'editor'} onChange={() => setShareRole('editor')} style={{ marginRight: '5px' }}/>
                 📝 可編輯
               </label>
             </div>
@@ -363,7 +351,7 @@ function App() {
         </div>
       )}
 
-      {/* 收據說明彈窗 Modal */}
+      {/* 收據說明彈窗 */}
       {receiptModalData && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
           <div style={{ backgroundColor: '#ffffff', width: '100%', maxWidth: '400px', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', maxHeight: '90vh', position: 'relative' }}>
@@ -427,26 +415,42 @@ function App() {
         </div>
       )}
 
-      <div style={{ backgroundColor: '#ffffff', padding: '15px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10, boxSizing: 'border-box' }}>
-        <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-          <button onClick={() => setCurrentTrip(null)} style={{ padding: '8px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', fontWeight: 600, cursor: 'pointer', outline: 'none', color: '#4a5568', fontSize: '15px' }}>🔙 大廳</button>
+      {/* ====== 💡 修改：頂部導覽列大改版 ====== */}
+      <div style={{ backgroundColor: '#ffffff', padding: '15px 20px', boxShadow: '0 2px 15px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10, boxSizing: 'border-box' }}>
+        <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+          
+          {/* 上半部：按鈕與置中標題 */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' }}>
+            
+            {/* 左側：返回大廳 */}
+            <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }}>
+              <button onClick={() => setCurrentTrip(null)} style={{ padding: '8px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', fontWeight: 600, cursor: 'pointer', outline: 'none', color: '#4a5568', fontSize: '15px', transition: 'all 0.2s' }}>🔙 大廳</button>
+            </div>
 
-          {/* 💡 標題與分享按鈕 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h1 style={{ margin: 0, color: '#1a365d', fontSize: '1.3em', fontWeight: 600 }}>{currentTrip.title}</h1>
-            {currentTrip.role === 'owner' && (
-              <button onClick={() => setShareModalOpen(true)} style={{ padding: '4px 10px', backgroundColor: '#ebf8ff', color: '#3182ce', border: '1px solid #bee3f8', borderRadius: '12px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}>🔗 分享</button>
-            )}
-            {!canEdit && (
-              <span style={{ padding: '4px 8px', backgroundColor: '#edf2f7', color: '#718096', borderRadius: '12px', fontSize: '12px' }}>👁️ 檢視模式</span>
-            )}
+            {/* 中間：行程名稱置中 */}
+            <div style={{ flex: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
+              <h1 style={{ margin: 0, color: '#1a365d', fontSize: '1.4em', fontWeight: 700, textAlign: 'center' }}>{currentTrip.title}</h1>
+              {!canEdit && (
+                 <span style={{ padding: '4px 8px', backgroundColor: '#edf2f7', color: '#718096', borderRadius: '12px', fontSize: '12px', whiteSpace: 'nowrap', fontWeight: 'bold' }}>👁️ 檢視模式</span>
+              )}
+            </div>
+
+            {/* 右側：分享按鈕 */}
+            <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
+              {currentTrip.role === 'owner' && (
+                <button onClick={() => setShareModalOpen(true)} style={{ padding: '8px 16px', backgroundColor: '#ebf8ff', color: '#3182ce', border: '1px solid #bee3f8', borderRadius: '8px', cursor: 'pointer', fontSize: '15px', fontWeight: 'bold', transition: 'all 0.2s', boxShadow: '0 2px 4px rgba(49, 130, 206, 0.1)' }}>🔗 分享</button>
+              )}
+            </div>
+
           </div>
 
-          <div style={{ display: 'flex', gap: '5px' }}>
-            <button onClick={() => setActiveTab('itinerary')} style={getTabStyle('itinerary')}>📍 看板</button>
-            <button onClick={() => setActiveTab('shopping')} style={getTabStyle('shopping')}>🛒 購物</button>
-            <button onClick={() => setActiveTab('expenses')} style={getTabStyle('expenses')}>💰 記帳</button>
+          {/* 下半部：三大分頁置中 */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
+            <button onClick={() => setActiveTab('itinerary')} style={getTabStyle('itinerary')}>📍 行程看板</button>
+            <button onClick={() => setActiveTab('shopping')} style={getTabStyle('shopping')}>🛒 購物清單</button>
+            <button onClick={() => setActiveTab('expenses')} style={getTabStyle('expenses')}>💰 記帳本</button>
           </div>
+
         </div>
       </div>
 
@@ -454,7 +458,6 @@ function App() {
         {/* 行程分頁 */}
         {activeTab === 'itinerary' && (
           <>
-            {/* 💡 只有編輯者才能看到新增表單 */}
             {canEdit && (
               <form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px', backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)', boxSizing: 'border-box' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
@@ -480,8 +483,7 @@ function App() {
         {activeTab === 'shopping' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             <h2 style={{ color: '#2c7a7b', marginTop: 0, fontWeight: 600 }}>🛒 購物清單</h2>
-
-            {/* 💡 只有編輯者才能看到新增表單 */}
+            
             {canEdit && (
               <form onSubmit={handleAddShop} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '25px', background: '#f0f9ff', padding: '20px', borderRadius: '12px', border: '1px solid #bae3ff', boxSizing: 'border-box' }}>
                 <input type="text" placeholder="想買什麼？ (如: 防曬乳)" value={newShopForm.name} onChange={e => setNewShopForm({ ...newShopForm, name: e.target.value })} required style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
@@ -516,8 +518,7 @@ function App() {
                           {item.location && <span style={{ fontSize: '0.85em', color: '#718096', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word', marginTop: '2px' }}>📍 {item.location}</span>}
                         </div>
                       </div>
-
-                      {/* 💡 只有編輯者才能修改刪除 */}
+                      
                       {canEdit && (
                         <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
                           <button onClick={() => { setEditingShopId(item.id); setEditShopForm(item); }} style={{ background: 'none', border: 'none', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>✏️</button>
@@ -542,7 +543,7 @@ function App() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '8px 6px', alignItems: 'center', fontSize: '0.9em', color: '#718096' }}>
                   <span style={{ textAlign: 'right', fontWeight: 600 }}>預設幣別：</span>
                   <select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} style={{ padding: '6px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', backgroundColor: '#fff', width: '120px', fontSize: '1em', cursor: 'pointer' }}>
-                    {CURRENCY_OPTIONS.map(cur => (<option key={cur.code} value={cur.code}>{cur.label}</option>))}
+                    {CURRENCY_OPTIONS.map(cur => ( <option key={cur.code} value={cur.code}>{cur.label}</option> ))}
                   </select>
                 </div>
               </div>
@@ -567,7 +568,6 @@ function App() {
               </div>
             )}
 
-            {/* 💡 只有編輯者能新增花費與 AI 掃描 */}
             {canEdit && (
               <>
                 <div style={{ marginBottom: '15px' }}>
@@ -584,7 +584,7 @@ function App() {
                   </div>
                   <input type="text" placeholder="消費明細" value={newExpense.description} onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', width: '100%', boxSizing: 'border-box' }} />
                   <select value={newExpense.day_number} onChange={(e) => setNewExpense({ ...newExpense, day_number: Number(e.target.value) })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', width: '100%', boxSizing: 'border-box' }}>
-                    {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>📅 Day {day} ({getDisplayDate(currentTrip.start_date, day)})</option>))}
+                    {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => ( <option key={day} value={day}>📅 Day {day} ({getDisplayDate(currentTrip.start_date, day)})</option> ))}
                   </select>
                   <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                     <label htmlFor="receipt-upload" style={{ flex: 1, padding: '12px', backgroundColor: newExpense.receipt_image ? '#ebf8ff' : '#fff', color: newExpense.receipt_image ? '#2b6cb0' : '#4a5568', borderRadius: '8px', border: newExpense.receipt_image ? '1px solid #3182ce' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>{newExpense.receipt_image ? '✅ 照片已準備' : '📸 附加發票照'}</label>
@@ -599,7 +599,7 @@ function App() {
               <h3 style={{ margin: 0, color: '#2d3748', fontSize: '1.1em', fontWeight: 600 }}>🧾 收據紀錄</h3>
               <select value={expenseFilterDay} onChange={e => setExpenseFilterDay(Number(e.target.value))} style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', backgroundColor: '#f8fafc', fontSize: '14px', fontWeight: 600, color: '#4a5568', cursor: 'pointer' }}>
                 <option value={0}>顯示全部天數</option>
-                {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>Day {day} ({getDisplayDate(currentTrip.start_date, day)})</option>))}
+                {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => ( <option key={day} value={day}>Day {day} ({getDisplayDate(currentTrip.start_date, day)})</option> ))}
               </select>
             </div>
 
@@ -613,7 +613,7 @@ function App() {
                         <input type="number" value={editExpenseForm.amount} onChange={e => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })} placeholder={`金額 (${baseCurrency})`} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                         <select value={editExpenseForm.category} onChange={e => setEditExpenseForm({ ...editExpenseForm, category: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }}>{EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
                         <select value={editExpenseForm.day_number || 1} onChange={(e) => setEditExpenseForm({ ...editExpenseForm, day_number: Number(e.target.value) })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
-                          {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>Day {day}</option>))}
+                          {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => ( <option key={day} value={day}>Day {day}</option> ))}
                         </select>
                         <input type="text" value={editExpenseForm.description} onChange={e => setEditExpenseForm({ ...editExpenseForm, description: e.target.value })} placeholder="消費明細" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '5px' }}>
@@ -630,14 +630,13 @@ function App() {
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed #e2e8f0', paddingTop: '12px', marginTop: '4px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            {exp.image_url && !isSmartExp && (<a href={exp.image_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '1.1rem', backgroundColor: '#edf2f7', padding: '6px', borderRadius: '6px' }}>🖼️</a>)}
+                            {exp.image_url && !isSmartExp && ( <a href={exp.image_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '1.1rem', backgroundColor: '#edf2f7', padding: '6px', borderRadius: '6px' }}>🖼️</a> )}
                             <div style={{ textAlign: 'left' }}>
                               <strong style={{ color: '#e53e3e', fontSize: '1.2em', display: 'block' }}>{Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{exp.currency || 'JPY'}</span></strong>
                               <span style={{ fontSize: '0.8em', color: '#a0aec0', display: 'block', marginTop: '-2px' }}>≈ {exp.twd_amount ? Number(exp.twd_amount).toLocaleString() : '---'} TWD</span>
                             </div>
                           </div>
-
-                          {/* 💡 只有編輯者能修改刪除花費 */}
+                          
                           {canEdit && (
                             <div style={{ display: 'flex', gap: '8px' }}>
                               <button onClick={() => { setEditingExpenseId(exp.id); setEditExpenseForm(exp); }} style={{ background: '#edf2f7', border: 'none', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>✏️</button>
