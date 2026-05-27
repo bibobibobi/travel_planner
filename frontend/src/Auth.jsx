@@ -149,7 +149,7 @@ export default function Auth({ onLoginSuccess }) {
         <div style={styles.container}>
             <div style={styles.card}>
                 <h2 style={styles.title}>
-                    {isLoginMode ? '✈️ 歡迎回到旅遊記帳' : '📝 建立新帳號'}
+                    {isLoginMode ? ' 歡迎回到行程小助手' : '📝 建立新帳號'}
                 </h2>
 
                 {errorMessage && <div style={styles.errorBox}>{errorMessage}</div>}

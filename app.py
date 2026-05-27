@@ -9,9 +9,12 @@ from dotenv import load_dotenv
 import http.client
 import time
 
-# 💡 新增：密碼加密與 JWT 套件
+# 💡 密碼加密與 JWT 套件
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+
+# ====== 💡 新增：用來產生分享安全代碼的加密工具 ======
+from itsdangerous import URLSafeTimedSerializer
 
 load_dotenv()
 
@@ -26,9 +29,13 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://travel_user:travel123@localhost/travel_db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# 💡 新增：JWT 密鑰設定 (建議未來把這串金鑰放到 .env 檔案裡)
+# 💡 JWT 密鑰設定
 app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET_KEY", "your-super-secret-key-change-me-later")
 jwt = JWTManager(app)
+
+# ====== 💡 新增：分享連結專用的秘密金鑰與發放工具 ======
+app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "my_super_secret_travel_key")
+share_serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -37,7 +44,7 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 CORS(app)
 db = SQLAlchemy(app)
 
-# ====== 💡 自動匯率 API 與 1小時快取機制 ======
+# ====== 自動匯率 API 與 1小時快取機制 ======
 rate_cache = {}
 
 def get_twd_rate(base_currency):
@@ -74,7 +81,6 @@ def get_twd_rate(base_currency):
 
 # ================= 資料庫模型 =================
 
-# 💡 新增：使用者資料表
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
@@ -84,7 +90,6 @@ class User(db.Model):
 class Trip(db.Model):
     __tablename__ = 'trip'
     id = db.Column(db.Integer, primary_key=True)
-    # 💡 新增：記錄這個行程是哪個使用者創建的 (設為 nullable=True 是為了不讓你原本舊的假資料壞掉)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True) 
     title = db.Column(db.String(100), nullable=False)
     start_date = db.Column(db.Date, nullable=False)
@@ -93,6 +98,14 @@ class Trip(db.Model):
     items = db.relationship('ItineraryItem', backref='trip', lazy=True, cascade="all, delete-orphan")
     expenses = db.relationship('Expense', backref='trip', lazy=True, cascade="all, delete-orphan")
     shoppings = db.relationship('ShoppingItem', backref='trip', lazy=True, cascade="all, delete-orphan")
+
+class TripShare(db.Model):
+    __tablename__ = 'trip_shares'
+    id = db.Column(db.Integer, primary_key=True)
+    trip_id = db.Column(db.Integer, db.ForeignKey('trip.id', ondelete='CASCADE'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default='viewer')
+    __table_args__ = (db.UniqueConstraint('trip_id', 'user_id', name='_trip_user_uc'),)
 
 class ItineraryItem(db.Model):
     __tablename__ = 'item' 
@@ -139,7 +152,7 @@ def index():
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# ====== 🔐 新增：註冊與登入 API ======
+# ====== 🔐 註冊與登入 API ======
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.get_json()
@@ -171,7 +184,6 @@ def login():
     if not user or not check_password_hash(user.password_hash, password):
         return jsonify({"error": "帳號或密碼錯誤"}), 401
 
-    # 登入成功，將使用者的 ID 包裝進 JWT Token 中發放
     access_token = create_access_token(identity=str(user.id))
     
     return jsonify({
@@ -179,7 +191,65 @@ def login():
         "access_token": access_token
     }), 200
 
-# ====== 🤖 核心功能：AI 掃描發票 API ======
+# ====== 🔗 新增：行程分享相關 API ======
+@app.route('/api/trips/generate-share', methods=['POST'])
+@jwt_required()
+def generate_share():
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    trip_id = data.get('trip_id')
+    role = data.get('role', 'viewer')
+
+    # 安全檢查：確保要求產生連結的人，真的是這個行程的擁有者
+    trip = Trip.query.get(trip_id)
+    if not trip or str(trip.user_id) != str(current_user_id):
+        return jsonify({"error": "找不到行程或您無權分享此行程"}), 403
+
+    # 產生一組加密代碼，把 trip_id 和權限包在裡面
+    token = share_serializer.dumps({'trip_id': trip_id, 'role': role})
+    
+    return jsonify({"share_token": token}), 200
+
+@app.route('/api/trips/accept-share', methods=['POST'])
+@jwt_required()
+def accept_share():
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    token = data.get('share_token')
+
+    try:
+        # 解密代碼 (設定有效期限為 7 天：604800 秒)
+        payload = share_serializer.loads(token, max_age=604800)
+        trip_id = payload['trip_id']
+        role = payload['role']
+    except Exception as e:
+        return jsonify({"error": "分享連結無效或已過期，請重新索取"}), 400
+
+    # 檢查 1：擁有者不能也不需要加入自己的行程
+    trip = Trip.query.get(trip_id)
+    if not trip:
+        return jsonify({"error": "行程已不存在"}), 404
+    if str(trip.user_id) == str(current_user_id):
+        return jsonify({"message": "這是您自己的行程喔！", "role": "owner"}), 200
+
+    # 檢查 2：是否已經加入過？
+    existing_share = TripShare.query.filter_by(trip_id=trip_id, user_id=current_user_id).first()
+    if existing_share:
+        # 如果擁有者重新給了不同的權限，就幫他更新
+        if existing_share.role != role:
+            existing_share.role = role
+            db.session.commit()
+        return jsonify({"message": "您已經在這個行程裡囉！", "role": existing_share.role}), 200
+
+    # 正式加入！將朋友的資料寫進關聯表
+    new_share = TripShare(trip_id=trip_id, user_id=current_user_id, role=role)
+    db.session.add(new_share)
+    db.session.commit()
+
+    return jsonify({"message": "成功加入行程！", "role": role}), 200
+
+
+# ====== 🤖 AI 掃描發票 API ======
 @app.route('/api/scan-receipt', methods=['POST'])
 def scan_receipt():
     try:
@@ -230,19 +300,16 @@ def scan_receipt():
     except Exception as e:
         return jsonify({"error": f"後端真實錯誤: {str(e)}"}), 500
 
-# --- 其餘 API 路由 ---
 # ====== 💡 修改：加上 JWT 警衛，並過濾專屬使用者的行程 ======
 @app.route('/api/trips', methods=['GET', 'POST'])
-@jwt_required() # 💂‍♂️ 警衛在這裡！沒有帶 Token 的請求會直接被踢出去
+@jwt_required()
 def handle_trips():
-    # 取得當前拿著這張 Token 登入的使用者 ID
     current_user_id = get_jwt_identity() 
 
     if request.method == 'POST':
         data = request.get_json()
         budget_val = int(data.get('budget')) if data.get('budget') not in ["", None] else 0
         
-        # 💡 新增時，把 user_id 烙印在這個行程上
         new_trip = Trip(
             user_id=current_user_id, 
             title=data.get('title'), 
@@ -254,16 +321,36 @@ def handle_trips():
         db.session.commit()
         return jsonify({"status": "success", "id": new_trip.id}), 201
         
-    # 💡 查詢時，只撈取「擁有者是自己」的行程，不再是 query.all() 了！
-    user_trips = Trip.query.filter_by(user_id=current_user_id).all()
+    # ====== 💡 修改：撈取「自己的」+「別人分享的」行程 ======
     
-    return jsonify([{
-        "id": t.id, 
-        "title": t.title, 
-        "start_date": t.start_date.strftime("%Y-%m-%d"), 
-        "end_date": t.end_date.strftime("%Y-%m-%d"), 
-        "budget": t.budget
-    } for t in user_trips])
+    # 1. 撈出自己建立的行程
+    owned_trips = Trip.query.filter_by(user_id=current_user_id).order_by(Trip.start_date.asc()).all()
+    result = []
+    for t in owned_trips:
+        result.append({
+            "id": t.id, 
+            "title": t.title, 
+            "start_date": t.start_date.strftime("%Y-%m-%d"), 
+            "end_date": t.end_date.strftime("%Y-%m-%d"), 
+            "budget": t.budget,
+            "role": "owner"  # 👑 標記自己是擁有者
+        })
+
+    # 2. 撈出別人分享給我的行程
+    shared_records = TripShare.query.filter_by(user_id=current_user_id).all()
+    for record in shared_records:
+        t = Trip.query.get(record.trip_id)
+        if t:
+            result.append({
+                "id": t.id, 
+                "title": f"👥 {t.title}", # 加上圖示方便辨識這是共用行程
+                "start_date": t.start_date.strftime("%Y-%m-%d"), 
+                "end_date": t.end_date.strftime("%Y-%m-%d"), 
+                "budget": t.budget,
+                "role": record.role  # 📝 標記權限 (editor 或 viewer)
+            })
+
+    return jsonify(result), 200
 
 @app.route('/api/trips/<int:trip_id>', methods=['PUT', 'DELETE'])
 def modify_trip(trip_id):
