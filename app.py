@@ -26,15 +26,15 @@ import io
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://travel_user:travel123@localhost/travel_db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # 💡 JWT 密鑰設定
-app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET_KEY", "your-super-secret-key-change-me-later")
+app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET_KEY")
 jwt = JWTManager(app)
 
 # ====== 💡 新增：分享連結專用的秘密金鑰與發放工具 ======
-app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "my_super_secret_travel_key")
+app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY")
 share_serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
