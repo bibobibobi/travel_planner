@@ -152,15 +152,21 @@ def index():
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# ====== 🔐 註冊與登入 API ======
+# ====== 註冊與登入 API ======
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
+    invite_code = data.get('invite_code')
 
     if not email or not password:
         return jsonify({"error": "請提供 Email 與密碼"}), 400
+    
+    correct_code = os.getenv("INVITE_CODE")
+
+    if invite_code != correct_code:
+        return jsonify({"error": "無效的邀請碼"}), 400
 
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "這個 Email 已經註冊過囉！"}), 400

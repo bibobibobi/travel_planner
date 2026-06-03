@@ -4,6 +4,7 @@ export default function Auth({ onLoginSuccess }) {
     const [isLoginMode, setIsLoginMode] = useState(true);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [inviteCode, setInviteCode] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -22,7 +23,7 @@ export default function Auth({ onLoginSuccess }) {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ email, password }),
+                body: JSON.stringify({ email, password, invite_code: inviteCode }) // 註冊時會包含邀請碼，登入時則會忽略,
             });
 
             const data = await response.json();
@@ -174,6 +175,17 @@ export default function Auth({ onLoginSuccess }) {
                             onChange={(e) => setPassword(e.target.value)}
                             style={styles.input}
                             placeholder="請輸入密碼"
+                            required
+                        />
+                    </div>
+                    <div style={styles.formGroup}>
+                        <label style={styles.label}>邀請碼</label>
+                        <input
+                            type="text"
+                            value={inviteCode}
+                            onChange={(e) => setInviteCode(e.target.value)}
+                            style={styles.input}
+                            placeholder="請輸入邀請碼"
                             required
                         />
                     </div>
