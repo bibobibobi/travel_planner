@@ -166,21 +166,26 @@ function App() {
 
   const getTabStyle = (tabName) => ({ padding: '8px 14px', backgroundColor: activeTab === tabName ? (tabName === 'itinerary' ? '#e6fffa' : tabName === 'shopping' ? '#ebf8ff' : '#fff5f5') : 'transparent', color: activeTab === tabName ? (tabName === 'itinerary' ? '#319795' : tabName === 'shopping' ? '#2b6cb0' : '#e53e3e') : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '16px', transition: 'background 0.2s' });
 
+  // 💡 優化 1：AI 明細變成單行可點擊膠囊
   const renderSmartDescription = (exp) => {
     const desc = exp.description;
-    if (!desc) return <span style={{ color: '#a0aec0', fontSize: '0.95em' }}>無明細</span>;
+    if (!desc) return <span style={{ color: '#a0aec0', fontWeight: 'normal' }}>無明細</span>;
     try {
       const details = JSON.parse(desc);
       if (details && details.store_name) {
         return (
-          <div onClick={() => { setReceiptModalData({ receipt_details: details, image_url: exp.image_url, currency: exp.currency }); setIsReceiptModalForPreview(false); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '4px' }} title="點擊查看詳細收據與照片">
-            <strong style={{ color: '#2b6cb0', fontSize: '1.05em', borderBottom: '1px solid #90cdf4', paddingBottom: '2px' }}>🏪 {details.store_name}</strong>
-            <span style={{ fontSize: '0.8em', backgroundColor: '#e2e8f0', color: '#4a5568', padding: '2px 8px', borderRadius: '12px' }}>📄 點擊看收據與明細 ({details.items?.length || 0}項)</span>
+          <div
+            onClick={() => { setReceiptModalData({ receipt_details: details, image_url: exp.image_url, currency: exp.currency }); setIsReceiptModalForPreview(false); }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#2b6cb0', backgroundColor: '#ebf8ff', padding: '4px 10px', borderRadius: '8px', border: '1px solid #bee3f8', maxWidth: '100%', boxSizing: 'border-box' }}
+            title="點擊查看詳細收據與照片"
+          >
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 600 }}>🏪 {details.store_name}</span>
+            <span style={{ fontSize: '0.85em', flexShrink: 0, color: '#3182ce' }}>({details.items?.length || 0}項)</span>
           </div>
         );
       }
     } catch (e) { }
-    return <div style={{ color: '#4a5568', fontSize: '0.95em', wordBreak: 'break-word', whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>{desc}</div>;
+    return <span style={{ color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-all' }}>{desc}</span>;
   };
 
   const isSmartExp = (desc) => { try { return !!JSON.parse(desc)?.store_name; } catch (e) { return false; } };
@@ -211,14 +216,13 @@ function App() {
                         {...p.draggableProps}
                         style={{
                           ...p.draggableProps.style,
-                          // 核心邏輯：鎖定只能上下拖曳。把套件計算出來的 translate(X, Y) 強制把 X 變成 0px
+                          // 核心邏輯：鎖定只能上下拖曳
                           transform: p.draggableProps.style?.transform
                             ? p.draggableProps.style.transform.replace(/translate\((.*?),/, 'translate(0px,')
                             : 'none',
                         }}
                       >
                         {editingItemId === item.id ? (
-                          /* --- 編輯模式：不需要滑動，維持原樣 --- */
                           <div style={{ padding: '16px', margin: '0 0 10px 0', backgroundColor: '#ffffff', borderRadius: '10px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', borderLeft: `6px solid ${cat.color}`, boxSizing: 'border-box' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -235,26 +239,22 @@ function App() {
                             </div>
                           </div>
                         ) : (
-                          /* --- 檢視模式：套用剛剛寫好的滑動元件 --- */
                           <SwipeableItem
                             canEdit={canEdit}
                             onEdit={() => { setEditingItemId(item.id); setEditItemForm(item); }}
                             onDelete={() => deleteItem(item.id)}
-                            isOpen={openSwipeId === item.id}
-                            onOpen={() => setOpenSwipeId(item.id)}
+                            isOpen={openSwipeId === `item-${item.id}`}
+                            onOpen={() => setOpenSwipeId(`item-${item.id}`)}
                             onClose={() => setOpenSwipeId(null)}
                           >
-                            {/* 原本的卡片樣式移到這層，讓它跟著滑動 */}
                             <div style={{ display: 'flex', alignItems: 'flex-start', padding: '16px', backgroundColor: '#ffffff', borderLeft: `6px solid ${cat.color}`, boxSizing: 'border-box' }}>
 
-                              {/* 核心邏輯：把 dragHandleProps 只綁在這個把手上 */}
                               {canEdit && (
                                 <div {...p.dragHandleProps} style={{ padding: '0 12px 0 0', cursor: 'grab', display: 'flex', alignItems: 'center', color: '#cbd5e0', fontSize: '1.2rem', marginTop: '2px' }}>
                                   ☰
                                 </div>
                               )}
 
-                              {/* 行程主要內容區塊 */}
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                   <span style={{ fontSize: '1.2em', flexShrink: 0 }} title={cat.name}>{cat.icon}</span>
@@ -264,13 +264,11 @@ function App() {
                                 {item.memo && <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fcfaf2', borderLeft: '4px solid #f6e05e', borderRadius: '4px', fontSize: '0.9em', color: '#555', whiteSpace: 'pre-wrap' }}>{item.memo}</div>}
                               </div>
 
-                              {/* 💡 解決問題 3：把 Google Map 獨立出來放在最右側，變成一個漂亮的圓形按鈕 */}
                               {item.map_url && (
                                 <a
                                   href={item.map_url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  // 避免點擊地圖時誤觸發拖曳或滑動事件
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onTouchStart={(e) => e.stopPropagation()}
                                   style={{ textDecoration: 'none', fontSize: '1.1rem', marginLeft: '12px', backgroundColor: '#ebf8ff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
@@ -460,36 +458,27 @@ function App() {
         </div>
       )}
 
-      {/* ====== 💡 修改：頂部導覽列大改版 ====== */}
+      {/* 頂部導覽列 */}
       <div style={{ backgroundColor: '#ffffff', padding: '15px 20px', boxShadow: '0 2px 15px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 10, boxSizing: 'border-box' }}>
         <div style={{ maxWidth: '800px', margin: '0 auto' }}>
 
-          {/* 上半部：按鈕與置中標題 */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' }}>
-
-            {/* 左側：返回大廳 */}
             <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }}>
               <button onClick={() => setCurrentTrip(null)} style={{ padding: '8px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', fontWeight: 600, cursor: 'pointer', outline: 'none', color: '#4a5568', fontSize: '15px', transition: 'all 0.2s' }}>大廳</button>
             </div>
-
-            {/* 中間：行程名稱置中 */}
             <div style={{ flex: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
               <h1 style={{ margin: 0, color: '#1a365d', fontSize: '1.4em', fontWeight: 700, textAlign: 'center' }}>{currentTrip.title}</h1>
               {!canEdit && (
                 <span style={{ padding: '4px 8px', backgroundColor: '#edf2f7', color: '#718096', borderRadius: '12px', fontSize: '12px', whiteSpace: 'nowrap', fontWeight: 'bold' }}>👁️ 檢視模式</span>
               )}
             </div>
-
-            {/* 右側：分享按鈕 */}
             <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
               {currentTrip.role === 'owner' && (
                 <button onClick={() => setShareModalOpen(true)} style={{ padding: '8px 16px', backgroundColor: '#ebf8ff', color: '#3182ce', border: '1px solid #bee3f8', borderRadius: '8px', cursor: 'pointer', fontSize: '15px', fontWeight: 'bold', transition: 'all 0.2s', boxShadow: '0 2px 4px rgba(49, 130, 206, 0.1)' }}>分享</button>
               )}
             </div>
-
           </div>
 
-          {/* 下半部：三大分頁置中 */}
           <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
             <button onClick={() => setActiveTab('itinerary')} style={getTabStyle('itinerary')}>行程看板</button>
             <button onClick={() => setActiveTab('shopping')} style={getTabStyle('shopping')}>購物清單</button>
@@ -500,7 +489,8 @@ function App() {
       </div>
 
       <div style={{ padding: '20px 15px', maxWidth: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
-        {/* 行程分頁 */}
+
+        {/* ================= 行程分頁 ================= */}
         {activeTab === 'itinerary' && (
           <>
             {canEdit && (
@@ -524,7 +514,7 @@ function App() {
           </>
         )}
 
-        {/* 購物分頁 */}
+        {/* ================= 購物分頁 💡 升級左滑 ================= */}
         {activeTab === 'shopping' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             <h2 style={{ color: '#2c7a7b', marginTop: 0, fontWeight: 600 }}>🛒 購物清單</h2>
@@ -543,9 +533,9 @@ function App() {
 
             <ul style={{ listStyle: 'none', padding: 0 }}>
               {Array.isArray(shoppingItems) && shoppingItems.map(item => (
-                <li key={item.id} style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '15px', marginBottom: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', opacity: item.is_bought ? 0.6 : 1, boxSizing: 'border-box' }}>
+                <li key={item.id} style={{ marginBottom: '10px', opacity: item.is_bought ? 0.6 : 1 }}>
                   {editingShopId === item.id ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', backgroundColor: '#f8fafc', padding: '15px', borderRadius: '12px', border: '1px solid #e2e8f0', boxSizing: 'border-box' }}>
                       <input type="text" value={editShopForm.name} onChange={e => setEditShopForm({ ...editShopForm, name: e.target.value })} required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                       <input type="text" value={editShopForm.location} onChange={e => setEditShopForm({ ...editShopForm, location: e.target.value })} placeholder="哪裡買？" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
@@ -554,23 +544,25 @@ function App() {
                       </div>
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
-                        <input type="checkbox" checked={item.is_bought} onChange={() => toggleBoughtStatus(item)} disabled={!canEdit} style={{ width: '22px', height: '22px', cursor: canEdit ? 'pointer' : 'default', accentColor: '#38b2ac', flexShrink: 0 }} />
-                        {item.image_url && (<a href={item.image_url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0 }}><img src={item.image_url} alt="商品" style={{ width: '50px', height: '50px', borderRadius: '6px', objectFit: 'cover', border: '1px solid #ddd' }} /></a>)}
-                        <div style={{ flex: 1, minWidth: 0, textDecoration: item.is_bought ? 'line-through' : 'none' }}>
-                          <strong style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: '#2d3748', fontSize: '1.05em', wordBreak: 'break-word' }}>{item.name}</strong>
-                          {item.location && <span style={{ fontSize: '0.85em', color: '#718096', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word', marginTop: '2px' }}>📍 {item.location}</span>}
+                    <SwipeableItem
+                      canEdit={canEdit}
+                      onEdit={() => { setEditingShopId(item.id); setEditShopForm(item); }}
+                      onDelete={() => deleteShopItem(item.id)}
+                      isOpen={openSwipeId === `shop-${item.id}`}
+                      onOpen={() => setOpenSwipeId(`shop-${item.id}`)}
+                      onClose={() => setOpenSwipeId(null)}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', backgroundColor: '#ffffff', boxSizing: 'border-box', width: '100%', gap: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                          <input type="checkbox" checked={item.is_bought} onChange={() => toggleBoughtStatus(item)} disabled={!canEdit} style={{ width: '22px', height: '22px', cursor: canEdit ? 'pointer' : 'default', accentColor: '#38b2ac', flexShrink: 0 }} />
+                          {item.image_url && (<a href={item.image_url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}><img src={item.image_url} alt="商品" style={{ width: '45px', height: '45px', borderRadius: '6px', objectFit: 'cover', border: '1px solid #ddd' }} /></a>)}
+                          <div style={{ flex: 1, minWidth: 0, textDecoration: item.is_bought ? 'line-through' : 'none' }}>
+                            <strong style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: '#2d3748', fontSize: '1.05em', wordBreak: 'break-word' }}>{item.name}</strong>
+                            {item.location && <span style={{ fontSize: '0.85em', color: '#718096', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word', marginTop: '4px' }}>📍 {item.location}</span>}
+                          </div>
                         </div>
                       </div>
-
-                      {canEdit && (
-                        <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
-                          <button onClick={() => { setEditingShopId(item.id); setEditShopForm(item); }} style={{ background: 'none', border: 'none', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>✏️</button>
-                          <button onClick={() => deleteShopItem(item.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '10px' }}>🗑️</button>
-                        </div>
-                      )}
-                    </div>
+                    </SwipeableItem>
                   )}
                 </li>
               ))}
@@ -579,7 +571,7 @@ function App() {
           </div>
         )}
 
-        {/* 記帳分頁 */}
+        {/* ================= 記帳分頁 💡 升級左滑三欄式 ================= */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', flexWrap: 'wrap', gap: '15px', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -652,9 +644,9 @@ function App() {
               {filteredExpenses.map(exp => {
                 const isSmartExp = (() => { try { return !!JSON.parse(exp.description)?.store_name; } catch (e) { return false; } })();
                 return (
-                  <li key={exp.id} style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc', padding: '15px', marginBottom: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', boxSizing: 'border-box' }}>
+                  <li key={exp.id} style={{ marginBottom: '10px' }}>
                     {editingExpenseId === exp.id ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', backgroundColor: '#f8fafc', padding: '15px', borderRadius: '12px', border: '1px solid #e2e8f0', boxSizing: 'border-box' }}>
                         <input type="number" value={editExpenseForm.amount} onChange={e => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })} placeholder={`金額 (${baseCurrency})`} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                         <select value={editExpenseForm.category} onChange={e => setEditExpenseForm({ ...editExpenseForm, category: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }}>{EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
                         <select value={editExpenseForm.day_number || 1} onChange={(e) => setEditExpenseForm({ ...editExpenseForm, day_number: Number(e.target.value) })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
@@ -667,29 +659,58 @@ function App() {
                         </div>
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '8px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <strong style={{ color: '#2d3748', fontSize: '1.05em', marginBottom: '4px' }}>{exp.category}</strong>
-                          {renderSmartDescription(exp)}
-                          <div style={{ fontSize: '0.85em', color: '#718096', marginTop: '6px' }}>📅 Day {exp.day_number} ({getDisplayDate(currentTrip.start_date, exp.day_number)})</div>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed #e2e8f0', paddingTop: '12px', marginTop: '4px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            {exp.image_url && !isSmartExp && (<a href={exp.image_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '1.1rem', backgroundColor: '#edf2f7', padding: '6px', borderRadius: '6px' }}>🖼️</a>)}
-                            <div style={{ textAlign: 'left' }}>
-                              <strong style={{ color: '#e53e3e', fontSize: '1.2em', display: 'block' }}>{Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{exp.currency || 'JPY'}</span></strong>
-                              <span style={{ fontSize: '0.8em', color: '#a0aec0', display: 'block', marginTop: '-2px' }}>≈ {exp.twd_amount ? Number(exp.twd_amount).toLocaleString() : '---'} TWD</span>
+                      <SwipeableItem
+                        canEdit={canEdit}
+                        onEdit={() => { setEditingExpenseId(exp.id); setEditExpenseForm(exp); }}
+                        onDelete={() => deleteExpense(exp.id)}
+                        isOpen={openSwipeId === `exp-${exp.id}`}
+                        onOpen={() => setOpenSwipeId(`exp-${exp.id}`)}
+                        onClose={() => setOpenSwipeId(null)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', padding: '12px 16px', backgroundColor: '#ffffff', boxSizing: 'border-box' }}>
+
+                          {/* 區塊 1：左側分類圖示 */}
+                          <div style={{ fontSize: '1.5em', marginRight: '12px', flexShrink: 0, width: '42px', height: '42px', backgroundColor: '#f8fafc', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e2e8f0' }}>
+                            {EXPENSE_CATEGORIES.find(c => c.name === exp.category)?.icon || '❓'}
+                          </div>
+
+                          {/* 區塊 2：中間明細與日期 */}
+                          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '4px' }}>
+                            <div style={{ fontSize: '1.05em', lineHeight: '1.2' }}>
+                              {renderSmartDescription(exp)}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8em', color: '#718096' }}>
+                              <span>{exp.category}</span>
+                              <span style={{ fontSize: '0.6em' }}>●</span>
+                              <span>Day {exp.day_number}</span>
                             </div>
                           </div>
 
-                          {canEdit && (
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button onClick={() => { setEditingExpenseId(exp.id); setEditExpenseForm(exp); }} style={{ background: '#edf2f7', border: 'none', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>✏️</button>
-                              <button onClick={() => deleteExpense(exp.id)} style={{ background: '#fff5f5', border: 'none', color: '#fc8181', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '0.9rem', padding: '8px 12px' }}>🗑️</button>
-                            </div>
-                          )}
+                          {/* 區塊 3：右側金額與發票小標籤 */}
+                          <div style={{ textAlign: 'right', marginLeft: '10px', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
+                            <strong style={{ color: '#e53e3e', fontSize: '1.15em', lineHeight: '1.1' }}>
+                              {Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{exp.currency || 'JPY'}</span>
+                            </strong>
+                            <span style={{ fontSize: '0.8em', color: '#a0aec0', marginTop: '4px' }}>
+                              ≈ {exp.twd_amount ? Number(exp.twd_amount).toLocaleString() : '---'} TWD
+                            </span>
+                            {exp.image_url && !isSmartExp && (
+                              <a
+                                href={exp.image_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                style={{ textDecoration: 'none', marginTop: '4px', fontSize: '0.75em', backgroundColor: '#edf2f7', color: '#4a5568', padding: '2px 6px', borderRadius: '4px' }}
+                              >
+                                🖼️ 照片
+                              </a>
+                            )}
+                          </div>
+
                         </div>
-                      </div>
+                      </SwipeableItem>
                     )}
                   </li>
                 )
