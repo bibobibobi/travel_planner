@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import Auth from './Auth'
+import SwipeableItem from './SwipeableItem'
 import './App.css'
 
 function App() {
@@ -36,6 +37,8 @@ function App() {
   const [shareRole, setShareRole] = useState('viewer');
   const [shareLink, setShareLink] = useState('');
   const [isCopied, setIsCopied] = useState(false);
+
+  const [openSwipeId, setOpenSwipeId] = useState(null);
 
   useEffect(() => localStorage.setItem('travelBaseCurrency', baseCurrency), [baseCurrency]);
 
@@ -203,39 +206,81 @@ function App() {
                 return (
                   <Draggable key={item.id} draggableId={item.id} index={index} isDragDisabled={!canEdit}>
                     {(p, s) => (
-                      <div ref={p.innerRef} {...p.draggableProps} {...p.dragHandleProps} style={{ userSelect: 'none', padding: '16px', margin: '0 0 10px 0', backgroundColor: '#ffffff', borderRadius: '10px', boxShadow: s.isDragging ? '0 10px 25px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.05)', borderLeft: `6px solid ${cat.color}`, boxSizing: 'border-box', ...p.draggableProps.style }}>
+                      <div
+                        ref={p.innerRef}
+                        {...p.draggableProps}
+                        style={{
+                          ...p.draggableProps.style,
+                          // 核心邏輯：鎖定只能上下拖曳。把套件計算出來的 translate(X, Y) 強制把 X 變成 0px
+                          transform: p.draggableProps.style?.transform
+                            ? p.draggableProps.style.transform.replace(/translate\((.*?),/, 'translate(0px,')
+                            : 'none',
+                        }}
+                      >
                         {editingItemId === item.id ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                              <select value={editItemForm.category || '景點'} onChange={e => setEditItemForm({ ...editItemForm, category: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
-                              <input type="time" value={editItemForm.start_time || ''} onChange={e => setEditItemForm({ ...editItemForm, start_time: e.target.value })} style={{ backgroundColor: '#fff', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-                              <input type="text" value={editItemForm.content} onChange={e => setEditItemForm({ ...editItemForm, content: e.target.value })} placeholder="景點名稱" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-                            </div>
-                            <input type="url" value={editItemForm.map_url || ''} onChange={e => setEditItemForm({ ...editItemForm, map_url: e.target.value })} placeholder="Google Map 連結" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', outline: 'none', fontSize: '16px' }} />
-                            <textarea value={editItemForm.memo || ''} onChange={e => setEditItemForm({ ...editItemForm, memo: e.target.value })} placeholder="備註事項" rows="2" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', resize: 'vertical', outline: 'none', fontSize: '16px' }} />
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                              <button onClick={() => setEditingItemId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '15px' }}>取消</button>
-                              <button onClick={saveEditedItem} style={{ padding: '6px 12px', border: 'none', background: '#3182ce', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '15px' }}>儲存</button>
+                          /* --- 編輯模式：不需要滑動，維持原樣 --- */
+                          <div style={{ padding: '16px', margin: '0 0 10px 0', backgroundColor: '#ffffff', borderRadius: '10px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', borderLeft: `6px solid ${cat.color}`, boxSizing: 'border-box' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                <select value={editItemForm.category || '景點'} onChange={e => setEditItemForm({ ...editItemForm, category: e.target.value })} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}>{ITEM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
+                                <input type="time" value={editItemForm.start_time || ''} onChange={e => setEditItemForm({ ...editItemForm, start_time: e.target.value })} style={{ backgroundColor: '#fff', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                                <input type="text" value={editItemForm.content} onChange={e => setEditItemForm({ ...editItemForm, content: e.target.value })} placeholder="景點名稱" style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                              </div>
+                              <input type="url" value={editItemForm.map_url || ''} onChange={e => setEditItemForm({ ...editItemForm, map_url: e.target.value })} placeholder="Google Map 連結" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', outline: 'none', fontSize: '16px' }} />
+                              <textarea value={editItemForm.memo || ''} onChange={e => setEditItemForm({ ...editItemForm, memo: e.target.value })} placeholder="備註事項" rows="2" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', width: '100%', boxSizing: 'border-box', resize: 'vertical', outline: 'none', fontSize: '16px' }} />
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                                <button onClick={() => setEditingItemId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '15px' }}>取消</button>
+                                <button onClick={saveEditedItem} style={{ padding: '6px 12px', border: 'none', background: '#3182ce', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '15px' }}>儲存</button>
+                              </div>
                             </div>
                           </div>
                         ) : (
-                          <>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
-                                <span style={{ fontSize: '1.2em' }} title={cat.name}>{cat.icon}</span>
-                                {item.start_time && <span style={{ fontSize: '0.85em', fontWeight: 600, background: '#f0f4f8', color: '#4a5568', padding: '2px 6px', borderRadius: '4px' }}>{item.start_time}</span>}
-                                <strong style={{ fontSize: '1.1em', color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{item.content}</strong>
-                              </div>
+                          /* --- 檢視模式：套用剛剛寫好的滑動元件 --- */
+                          <SwipeableItem
+                            canEdit={canEdit}
+                            onEdit={() => { setEditingItemId(item.id); setEditItemForm(item); }}
+                            onDelete={() => deleteItem(item.id)}
+                            isOpen={openSwipeId === item.id}
+                            onOpen={() => setOpenSwipeId(item.id)}
+                            onClose={() => setOpenSwipeId(null)}
+                          >
+                            {/* 原本的卡片樣式移到這層，讓它跟著滑動 */}
+                            <div style={{ display: 'flex', alignItems: 'flex-start', padding: '16px', backgroundColor: '#ffffff', borderLeft: `6px solid ${cat.color}`, boxSizing: 'border-box' }}>
+
+                              {/* 核心邏輯：把 dragHandleProps 只綁在這個把手上 */}
                               {canEdit && (
-                                <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
-                                  {item.map_url && <a href={item.map_url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', fontSize: '0.9rem', padding: '10px' }}>📍</a>}
-                                  <button onClick={() => { setEditingItemId(item.id); setEditItemForm(item) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem', outline: 'none', padding: '10px' }}>✏️</button>
-                                  <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', color: '#fc8181', cursor: 'pointer', fontSize: '0.9rem', outline: 'none', padding: '10px' }}>🗑️</button>
+                                <div {...p.dragHandleProps} style={{ padding: '0 12px 0 0', cursor: 'grab', display: 'flex', alignItems: 'center', color: '#cbd5e0', fontSize: '1.2rem', marginTop: '2px' }}>
+                                  ☰
                                 </div>
                               )}
+
+                              {/* 行程主要內容區塊 */}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '1.2em', flexShrink: 0 }} title={cat.name}>{cat.icon}</span>
+                                  {item.start_time && <span style={{ fontSize: '0.85em', fontWeight: 600, background: '#f0f4f8', color: '#4a5568', padding: '2px 6px', borderRadius: '4px', flexShrink: 0 }}>{item.start_time}</span>}
+                                  <strong style={{ fontSize: '1.1em', color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{item.content}</strong>
+                                </div>
+                                {item.memo && <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fcfaf2', borderLeft: '4px solid #f6e05e', borderRadius: '4px', fontSize: '0.9em', color: '#555', whiteSpace: 'pre-wrap' }}>{item.memo}</div>}
+                              </div>
+
+                              {/* 💡 解決問題 3：把 Google Map 獨立出來放在最右側，變成一個漂亮的圓形按鈕 */}
+                              {item.map_url && (
+                                <a
+                                  href={item.map_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  // 避免點擊地圖時誤觸發拖曳或滑動事件
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onTouchStart={(e) => e.stopPropagation()}
+                                  style={{ textDecoration: 'none', fontSize: '1.1rem', marginLeft: '12px', backgroundColor: '#ebf8ff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
+                                >
+                                  📍
+                                </a>
+                              )}
+
                             </div>
-                            {item.memo && <div style={{ marginTop: '10px', marginLeft: '35px', padding: '10px', backgroundColor: '#fcfaf2', borderLeft: '4px solid #f6e05e', borderRadius: '4px', fontSize: '0.9em', color: '#555', whiteSpace: 'pre-wrap' }}>{item.memo}</div>}
-                          </>
+                          </SwipeableItem>
                         )}
                       </div>
                     )}
