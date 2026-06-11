@@ -179,7 +179,7 @@ function App() {
             style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#2b6cb0', backgroundColor: '#ebf8ff', padding: '4px 10px', borderRadius: '8px', border: '1px solid #bee3f8', maxWidth: '100%', boxSizing: 'border-box' }}
             title="點擊查看詳細收據與照片"
           >
-            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 600 }}>🏪 {details.store_name}</span>
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 600 }}>{details.store_name}</span>
             <span style={{ fontSize: '0.85em', flexShrink: 0, color: '#3182ce' }}>({details.items?.length || 0}項)</span>
           </div>
         );
@@ -414,7 +414,7 @@ function App() {
               {receiptModalData.receipt_details ? (
                 <>
                   <div style={{ marginBottom: '15px', color: '#2f855a', fontWeight: 600, fontSize: '1.1em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>🏪 {receiptModalData.receipt_details.store_name}</span>
+                    <span>{receiptModalData.receipt_details.store_name}</span>
                     {isReceiptModalForPreview && receiptModalData.autoDayNumber && (
                       <span style={{ fontSize: '0.75em', backgroundColor: '#e6fffa', padding: '4px 8px', borderRadius: '8px', color: '#2c7a7b', border: '1px solid #b2f5ea', display: 'flex', alignItems: 'center' }}>
                         📅 自動歸入 Day {receiptModalData.autoDayNumber}
@@ -584,9 +584,13 @@ function App() {
                   </select>
                 </div>
               </div>
-              <div style={{ textAlign: 'right', flex: '0 0 auto' }}>
-                <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e', display: 'block', lineHeight: '1.2' }}>{totalBaseExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>{baseCurrency}</span></span>
-                <span style={{ fontSize: '1em', color: '#718096', fontWeight: 500, display: 'block', marginTop: '4px' }}>≈ {totalTwdExpense.toLocaleString()} TWD</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: '8px', flex: '0 0 auto', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e', lineHeight: '1.2' }}>
+                  {totalBaseExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>{baseCurrency}</span>
+                </span>
+                <span style={{ fontSize: '1em', color: '#718096', fontWeight: 500 }}>
+                  ≈ {totalTwdExpense.toLocaleString()} TWD
+                </span>
               </div>
             </div>
 
@@ -624,7 +628,7 @@ function App() {
                     {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>📅 Day {day} ({getDisplayDate(currentTrip.start_date, day)})</option>))}
                   </select>
                   <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <label htmlFor="receipt-upload" style={{ flex: 1, padding: '12px', backgroundColor: newExpense.receipt_image ? '#ebf8ff' : '#fff', color: newExpense.receipt_image ? '#2b6cb0' : '#4a5568', borderRadius: '8px', border: newExpense.receipt_image ? '1px solid #3182ce' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>{newExpense.receipt_image ? '✅ 照片已準備' : '📸 附加發票照'}</label>
+                    <label htmlFor="receipt-upload" style={{ flex: 1, padding: '12px', backgroundColor: newExpense.receipt_image ? '#ebf8ff' : '#fff', color: newExpense.receipt_image ? '#2b6cb0' : '#4a5568', borderRadius: '8px', border: newExpense.receipt_image ? '1px solid #3182ce' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>{newExpense.receipt_image ? '✅ 照片已準備' : '附加發票照'}</label>
                     <input id="receipt-upload" type="file" accept="image/*" capture="environment" onChange={e => setNewExpense({ ...newExpense, receipt_image: e.target.files[0] })} style={{ display: 'none' }} />
                     <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#f56565', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}>＋ 記一筆</button>
                   </div>
