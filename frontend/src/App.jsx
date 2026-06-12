@@ -28,7 +28,7 @@ function App() {
   const [editExpenseForm, setEditExpenseForm] = useState({})
   const [newExpense, setNewExpense] = useState({ amount: '', category: '飲食', description: '', day_number: 1, receipt_image: null })
   const [isScanning, setIsScanning] = useState(false)
-  const [expenseFilterDay, setExpenseFilterDay] = useState(0);
+  const [expenseFilterDay, setExpenseFilterDay] = useState(-1);
   const [receiptModalData, setReceiptModalData] = useState(null);
   const [isReceiptModalForPreview, setIsReceiptModalForPreview] = useState(false);
   const [baseCurrency, setBaseCurrency] = useState(() => localStorage.getItem('travelBaseCurrency') || 'JPY');
@@ -58,7 +58,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (expenseFilterDay !== 0) setNewExpense(prev => ({ ...prev, day_number: expenseFilterDay }));
+    if (expenseFilterDay !== -1) setNewExpense(prev => ({ ...prev, day_number: expenseFilterDay }));
   }, [expenseFilterDay]);
 
   const getAuthHeaders = (isFormData = false) => {
@@ -158,7 +158,7 @@ function App() {
   const EXPENSE_CATEGORIES = [{ name: '飲食', icon: '🍔' }, { name: '交通', icon: '🚗' }, { name: '購物', icon: '🛍️' }, { name: '住宿', icon: '🛏️' }, { name: '其他', icon: '❓' }];
   const CURRENCY_OPTIONS = [{ code: 'JPY', label: 'JPY (日圓)' }, { code: 'KRW', label: 'KRW (韓元)' }, { code: 'THB', label: 'THB (泰銖)' }, { code: 'USD', label: 'USD (美元)' }, { code: 'EUR', label: 'EUR (歐元)' }, { code: 'VND', label: 'VND (越南盾)' }, { code: 'TWD', label: 'TWD (台幣)' },];
 
-  const filteredExpenses = Array.isArray(expenses) ? (expenseFilterDay === 0 ? expenses : expenses.filter(exp => exp.day_number === expenseFilterDay)) : [];
+  const filteredExpenses = Array.isArray(expenses) ? (expenseFilterDay === -1 ? expenses : expenses.filter(exp => exp.day_number === expenseFilterDay)) : [];
   const totalBaseExpense = filteredExpenses.filter(e => (e.currency || 'JPY') === baseCurrency).reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
   const totalTwdExpense = filteredExpenses.reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0);
   const getDailyTotalTwdExpense = (day) => { return Array.isArray(expenses) ? expenses.filter(e => e.day_number === day).reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0) : 0; };
@@ -624,6 +624,7 @@ function App() {
                   </div>
                   <input type="text" placeholder="消費明細" value={newExpense.description} onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', fontSize: '16px', width: '100%', boxSizing: 'border-box' }} />
                   <select value={newExpense.day_number} onChange={(e) => setNewExpense({ ...newExpense, day_number: Number(e.target.value) })} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', backgroundColor: '#fff', fontSize: '16px', width: '100%', boxSizing: 'border-box' }}>
+                    <option value={0}>💳 事前預約 / 門票</option>
                     {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>📅 Day {day} ({getDisplayDate(currentTrip.start_date, day)})</option>))}
                   </select>
                   <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -638,7 +639,8 @@ function App() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: '0 5px' }}>
               <h3 style={{ margin: 0, color: '#2d3748', fontSize: '1.1em', fontWeight: 600 }}>🧾 收據紀錄</h3>
               <select value={expenseFilterDay} onChange={e => setExpenseFilterDay(Number(e.target.value))} style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #cbd5e0', outline: 'none', backgroundColor: '#f8fafc', fontSize: '14px', fontWeight: 600, color: '#4a5568', cursor: 'pointer' }}>
-                <option value={0}>顯示全部天數</option>
+                <option value={-1}>顯示全部天數</option>
+                <option value={0}>事前預約 / 門票</option>
                 {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>Day {day} ({getDisplayDate(currentTrip.start_date, day)})</option>))}
               </select>
             </div>
@@ -653,6 +655,7 @@ function App() {
                         <input type="number" value={editExpenseForm.amount} onChange={e => setEditExpenseForm({ ...editExpenseForm, amount: e.target.value })} placeholder={`金額 (${baseCurrency})`} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
                         <select value={editExpenseForm.category} onChange={e => setEditExpenseForm({ ...editExpenseForm, category: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }}>{EXPENSE_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}</select>
                         <select value={editExpenseForm.day_number || 1} onChange={(e) => setEditExpenseForm({ ...editExpenseForm, day_number: Number(e.target.value) })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
+                          <option value={0}>事前預約 / 門票</option>
                           {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>Day {day}</option>))}
                         </select>
                         <input type="text" value={editExpenseForm.description} onChange={e => setEditExpenseForm({ ...editExpenseForm, description: e.target.value })} placeholder="消費明細" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
@@ -685,7 +688,9 @@ function App() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8em', color: '#718096' }}>
                               <span>{exp.category}</span>
                               <span style={{ fontSize: '0.6em' }}>●</span>
-                              <span>Day {exp.day_number}</span>
+                              <span style={{ fontWeight: exp.day_number === 0 ? 600 : 'normal', color: exp.day_number === 0 ? '#3182ce' : 'inherit' }}>
+                                {exp.day_number === 0 ? '事前預約' : `Day ${exp.day_number}`}
+                              </span>
                             </div>
                           </div>
 
