@@ -318,38 +318,49 @@ function App() {
               <button type="submit" style={{ padding: '12px', backgroundColor: '#3182ce', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '16px', boxSizing: 'border-box', width: '100%' }}>新增行程</button>
             </form>
           </div>
-          {trips.map(trip => (
-            <div key={trip.id} onClick={() => { if (editingLobbyTripId !== trip.id) selectTrip(trip) }} style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', marginBottom: '15px', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.02)', boxSizing: 'border-box' }}>
-              {editingLobbyTripId === trip.id ? (
-                <form onSubmit={handleUpdateLobbyTrip} style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }} onClick={e => e.stopPropagation()}>
-                  <input type="text" value={lobbyEditForm.title} onChange={e => setLobbyEditForm({ ...lobbyEditForm, title: e.target.value })} required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    <input type="date" value={lobbyEditForm.start_date} onChange={e => setLobbyEditForm({ ...lobbyEditForm, start_date: e.target.value })} required style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }} />
-                    <input type="date" value={lobbyEditForm.end_date} onChange={e => setLobbyEditForm({ ...lobbyEditForm, end_date: e.target.value })} required style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }} />
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {trips.map(trip => (
+              <li key={trip.id} style={{ marginBottom: '15px' }}>
+                {editingLobbyTripId === trip.id ? (
+                  <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', boxSizing: 'border-box' }}>
+                    <form onSubmit={handleUpdateLobbyTrip} style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
+                      <input type="text" value={lobbyEditForm.title} onChange={e => setLobbyEditForm({ ...lobbyEditForm, title: e.target.value })} required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }} />
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <input type="date" value={lobbyEditForm.start_date} onChange={e => setLobbyEditForm({ ...lobbyEditForm, start_date: e.target.value })} required style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }} />
+                        <input type="date" value={lobbyEditForm.end_date} onChange={e => setLobbyEditForm({ ...lobbyEditForm, end_date: e.target.value })} required style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e0', outline: 'none', fontSize: '16px', boxSizing: 'border-box', backgroundColor: '#fff' }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                        <button type="button" onClick={() => setEditingLobbyTripId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '15px', fontWeight: 600, color: '#4a5568' }}>取消</button>
+                        <button type="submit" style={{ padding: '6px 12px', border: 'none', background: '#3182ce', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '15px' }}>儲存</button>
+                      </div>
+                    </form>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                    <button type="button" onClick={() => setEditingLobbyTripId(null)} style={{ padding: '6px 12px', border: 'none', background: '#e2e8f0', borderRadius: '6px', cursor: 'pointer', outline: 'none', fontSize: '15px', fontWeight: 600, color: '#4a5568' }}>取消</button>
-                    <button type="submit" style={{ padding: '6px 12px', border: 'none', background: '#3182ce', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '15px' }}>儲存</button>
-                  </div>
-                </form>
-              ) : (
-                <>
-                  <div>
-                    <strong style={{ fontSize: '1.2em', color: '#2d3748' }}>{trip.title}</strong>
-                    {trip.role === 'editor' && <span style={{ marginLeft: '10px', fontSize: '0.7em', backgroundColor: '#ebf8ff', color: '#3182ce', padding: '2px 6px', borderRadius: '4px' }}>📝 可編輯</span>}
-                    {trip.role === 'viewer' && <span style={{ marginLeft: '10px', fontSize: '0.7em', backgroundColor: '#edf2f7', color: '#718096', padding: '2px 6px', borderRadius: '4px' }}>👁️ 僅檢視</span>}
-                    <br /><small style={{ color: '#718096' }}>📅 {trip.start_date} ~ {trip.end_date}</small>
-                  </div>
-                  {trip.role === 'owner' && (
-                    <div style={{ display: 'flex', gap: '2px' }}>
-                      <button onClick={(e) => startEditingLobbyTrip(trip, e)} style={{ background: 'none', border: 'none', fontSize: '0.9rem', cursor: 'pointer', outline: 'none', padding: '10px' }}>✏️</button>
-                      <button onClick={(e) => handleDeleteTrip(trip.id, e)} style={{ background: 'none', border: 'none', fontSize: '0.9rem', color: '#fc8181', cursor: 'pointer', outline: 'none', padding: '10px' }}>🗑️</button>
+                ) : (
+                  <SwipeableItem
+                    canEdit={trip.role === 'owner'}
+                    // 傳入一個假的 event 物件以防原本的 e.stopPropagation() 報錯
+                    onEdit={() => startEditingLobbyTrip(trip, { stopPropagation: () => { } })}
+                    onDelete={() => handleDeleteTrip(trip.id, { stopPropagation: () => { } })}
+                    isOpen={openSwipeId === `lobby-${trip.id}`}
+                    onOpen={() => setOpenSwipeId(`lobby-${trip.id}`)}
+                    onClose={() => setOpenSwipeId(null)}
+                  >
+                    <div
+                      onClick={() => selectTrip(trip)}
+                      style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRight: 'none', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxSizing: 'border-box', width: '100%' }}
+                    >
+                      <div>
+                        <strong style={{ fontSize: '1.2em', color: '#2d3748' }}>{trip.title}</strong>
+                        {trip.role === 'editor' && <span style={{ marginLeft: '10px', fontSize: '0.7em', backgroundColor: '#ebf8ff', color: '#3182ce', padding: '2px 6px', borderRadius: '4px' }}>📝 可編輯</span>}
+                        {trip.role === 'viewer' && <span style={{ marginLeft: '10px', fontSize: '0.7em', backgroundColor: '#edf2f7', color: '#718096', padding: '2px 6px', borderRadius: '4px' }}>👁️ 僅檢視</span>}
+                        <br /><small style={{ color: '#718096' }}>📅 {trip.start_date} ~ {trip.end_date}</small>
+                      </div>
                     </div>
-                  )}
-                </>
-              )}
-            </div>
-          ))}
+                  </SwipeableItem>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     )
