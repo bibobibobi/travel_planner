@@ -112,7 +112,6 @@ function App() {
       body: JSON.stringify({ trip_id: currentTrip.id, role: shareRole })
     })
       .then(async (res) => {
-        // 💡 攔截後端的 404 或 500 錯誤，防止後續解析 JSON 時壞掉
         if (!res.ok) {
           const errorText = await res.text();
           throw new Error(`伺服器錯誤狀態碼：${res.status}`);
@@ -145,7 +144,6 @@ function App() {
   const startEditingLobbyTrip = (trip, e) => { e.stopPropagation(); setEditingLobbyTripId(trip.id); setLobbyEditForm(trip) }
   const handleUpdateLobbyTrip = (e) => { e.preventDefault(); fetch(`${API_BASE}/trips/${editingLobbyTripId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(lobbyEditForm) }).then(() => { fetchTrips(); setEditingLobbyTripId(null); }) }
 
-  // 💡 升級：動態判斷刪除或退出提示
   const handleDeleteTrip = (trip, e) => {
     e.stopPropagation();
     const isOwner = trip.role === 'owner';
@@ -178,11 +176,25 @@ function App() {
   const EXPENSE_CATEGORIES = [{ name: '飲食', icon: '🍔' }, { name: '交通', icon: '🚗' }, { name: '購物', icon: '🛍️' }, { name: '住宿', icon: '🛏️' }, { name: '其他', icon: '❓' }];
   const CURRENCY_OPTIONS = [{ code: 'JPY', label: 'JPY (日圓)' }, { code: 'KRW', label: 'KRW (韓元)' }, { code: 'THB', label: 'THB (泰銖)' }, { code: 'USD', label: 'USD (美元)' }, { code: 'EUR', label: 'EUR (歐元)' }, { code: 'VND', label: 'VND (越南盾)' }, { code: 'TWD', label: 'TWD (台幣)' },];
 
+  // 💡 多幣別計算邏輯
   const filteredExpenses = Array.isArray(expenses) ? (expenseFilterDay === -1 ? expenses : expenses.filter(exp => exp.day_number === expenseFilterDay)) : [];
-  const totalBaseExpense = filteredExpenses.filter(e => (e.currency || 'JPY') === baseCurrency).reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
   const totalTwdExpense = filteredExpenses.reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0);
   const getDailyTotalTwdExpense = (day) => { return Array.isArray(expenses) ? expenses.filter(e => e.day_number === day).reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0) : 0; };
-  const categoryTotals = filteredExpenses.reduce((acc, exp) => { const cat = exp.category || '其他'; acc[cat] = acc[cat] || { amount: 0, twd: 0 }; acc[cat].amount += (Number(exp.amount) || 0); acc[cat].twd += (Number(exp.twd_amount) || 0); return acc; }, {});
+
+  const totalsByCurrency = filteredExpenses.reduce((acc, exp) => {
+    const cur = exp.currency || 'JPY';
+    acc[cur] = (acc[cur] || 0) + (Number(exp.amount) || 0);
+    return acc;
+  }, {});
+
+  const categoryTotals = filteredExpenses.reduce((acc, exp) => {
+    const cat = exp.category || '其他';
+    const cur = exp.currency || 'JPY';
+    acc[cat] = acc[cat] || { twd: 0, currencies: {} };
+    acc[cat].currencies[cur] = (acc[cat].currencies[cur] || 0) + (Number(exp.amount) || 0);
+    acc[cat].twd += (Number(exp.twd_amount) || 0);
+    return acc;
+  }, {});
 
   const getTabStyle = (tabName) => ({ padding: '8px 14px', backgroundColor: activeTab === tabName ? (tabName === 'itinerary' ? '#e6fffa' : tabName === 'shopping' ? '#ebf8ff' : '#fff5f5') : 'transparent', color: activeTab === tabName ? (tabName === 'itinerary' ? '#319795' : tabName === 'shopping' ? '#2b6cb0' : '#e53e3e') : '#718096', border: 'none', borderRadius: '20px', cursor: 'pointer', fontWeight: 600, outline: 'none', fontSize: '16px', transition: 'background 0.2s' });
 
@@ -198,7 +210,6 @@ function App() {
             style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#2b6cb0', backgroundColor: '#ebf8ff', padding: '4px 10px', borderRadius: '8px', border: '1px solid #bee3f8', maxWidth: '100%', boxSizing: 'border-box' }}
             title="點擊查看詳細收據與照片"
           >
-            {/* 💡 移除 Emoji */}
             <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 600 }}>{details.store_name}</span>
             <span style={{ fontSize: '0.85em', flexShrink: 0, color: '#3182ce' }}>({details.items?.length || 0}項)</span>
           </div>
@@ -459,7 +470,6 @@ function App() {
               {receiptModalData.receipt_details ? (
                 <>
                   <div style={{ marginBottom: '15px', color: '#2f855a', fontWeight: 600, fontSize: '1.1em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    {/* 💡 移除 Emoji */}
                     <span>{receiptModalData.receipt_details.store_name}</span>
                     {isReceiptModalForPreview && receiptModalData.autoDayNumber && (
                       <span style={{ fontSize: '0.75em', backgroundColor: '#e6fffa', padding: '4px 8px', borderRadius: '8px', color: '#2c7a7b', border: '1px solid #b2f5ea', display: 'flex', alignItems: 'center' }}>
@@ -560,7 +570,7 @@ function App() {
           </>
         )}
 
-        {/* ================= 購物分頁 💡 升級左滑 ================= */}
+        {/* ================= 購物分頁 ================= */}
         {activeTab === 'shopping' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             <h2 style={{ color: '#2c7a7b', marginTop: 0, fontWeight: 600 }}>🛒 購物清單</h2>
@@ -617,7 +627,7 @@ function App() {
           </div>
         )}
 
-        {/* ================= 記帳分頁 💡 升級左滑三欄式 ================= */}
+        {/* ================= 記帳分頁 ================= */}
         {activeTab === 'expenses' && (
           <div style={{ backgroundColor: '#ffffff', padding: '25px', borderRadius: '16px', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', boxSizing: 'border-box' }}>
             <div style={{ backgroundColor: '#fff5f5', padding: '20px', borderRadius: '12px', marginBottom: '15px', display: 'flex', flexWrap: 'wrap', gap: '15px', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -630,25 +640,44 @@ function App() {
                   </select>
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'flex-end', gap: '8px', flex: '0 0 auto', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '1.8em', fontWeight: 600, color: '#e53e3e', lineHeight: '1.2' }}>
-                  {totalBaseExpense.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>{baseCurrency}</span>
-                </span>
-                <span style={{ fontSize: '1em', color: '#718096', fontWeight: 500 }}>
+
+              {/* 💡 多幣別頂部總計 */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flex: '0 0 auto' }}>
+                {Object.keys(totalsByCurrency).length > 0 ? (
+                  Object.entries(totalsByCurrency).map(([cur, amt]) => (
+                    <span key={cur} style={{ fontSize: '1.6em', fontWeight: 600, color: '#e53e3e', lineHeight: '1.1' }}>
+                      {amt.toLocaleString()} <span style={{ fontSize: '0.5em', color: '#f56565' }}>{cur}</span>
+                    </span>
+                  ))
+                ) : (
+                  <span style={{ fontSize: '1.6em', fontWeight: 600, color: '#e53e3e', lineHeight: '1.1' }}>
+                    0 <span style={{ fontSize: '0.5em', color: '#f56565' }}>{baseCurrency}</span>
+                  </span>
+                )}
+                <span style={{ fontSize: '1em', color: '#718096', fontWeight: 500, marginTop: '2px' }}>
                   ≈ {totalTwdExpense.toLocaleString()} TWD
                 </span>
               </div>
             </div>
 
+            {/* 💡 多幣別分類卡片 */}
             {Object.keys(categoryTotals).length > 0 && (
               <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '20px', WebkitOverflowScrolling: 'touch' }}>
                 {EXPENSE_CATEGORIES.map(cat => {
                   if (!categoryTotals[cat.name]) return null;
                   return (
                     <div key={cat.name} style={{ flex: '0 0 auto', backgroundColor: '#f8fafc', padding: '12px 15px', borderRadius: '10px', border: '1px solid #e2e8f0', minWidth: '100px', boxSizing: 'border-box' }}>
-                      <div style={{ fontSize: '0.9em', color: '#718096', marginBottom: '4px', fontWeight: 600 }}>{cat.icon} {cat.name}</div>
-                      <div style={{ fontSize: '1.2em', color: '#2d3748', fontWeight: 600 }}>{categoryTotals[cat.name].amount.toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{baseCurrency}</span></div>
-                      <div style={{ fontSize: '0.8em', color: '#a0aec0', marginTop: '2px' }}>≈ {categoryTotals[cat.name].twd.toLocaleString()} TWD</div>
+                      <div style={{ fontSize: '0.9em', color: '#718096', marginBottom: '6px', fontWeight: 600 }}>{cat.icon} {cat.name}</div>
+
+                      {Object.entries(categoryTotals[cat.name].currencies).map(([cur, amt]) => (
+                        <div key={cur} style={{ fontSize: '1.1em', color: '#2d3748', fontWeight: 600, lineHeight: '1.2' }}>
+                          {amt.toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{cur}</span>
+                        </div>
+                      ))}
+
+                      <div style={{ fontSize: '0.85em', color: '#a0aec0', marginTop: '6px', borderTop: '1px dashed #cbd5e0', paddingTop: '4px' }}>
+                        ≈ {categoryTotals[cat.name].twd.toLocaleString()} TWD
+                      </div>
                     </div>
                   )
                 })}
@@ -675,7 +704,7 @@ function App() {
                     {Array.from({ length: totalDays }, (_, i) => i + 1).map(day => (<option key={day} value={day}>📅 Day {day} ({getDisplayDate(currentTrip.start_date, day)})</option>))}
                   </select>
                   <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <label htmlFor="receipt-upload" style={{ flex: 1, padding: '12px', backgroundColor: newExpense.receipt_image ? '#ebf8ff' : '#fff', color: newExpense.receipt_image ? '#2b6cb0' : '#4a5568', borderRadius: '8px', border: newExpense.receipt_image ? '1px solid #3182ce' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>{newExpense.receipt_image ? '✅ 照片已準備' : '📸 附加發票照'}</label>
+                    <label htmlFor="receipt-upload" style={{ flex: 1, padding: '12px', backgroundColor: newExpense.receipt_image ? '#ebf8ff' : '#fff', color: newExpense.receipt_image ? '#2b6cb0' : '#4a5568', borderRadius: '8px', border: newExpense.receipt_image ? '1px solid #3182ce' : '1px dashed #cbd5e0', textAlign: 'center', cursor: 'pointer', fontWeight: 600, fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>{newExpense.receipt_image ? '照片已準備' : '附加發票照'}</label>
                     <input id="receipt-upload" type="file" accept="image/*" capture="environment" onChange={e => setNewExpense({ ...newExpense, receipt_image: e.target.files[0] })} style={{ display: 'none' }} />
                     <button type="submit" style={{ flex: 1, padding: '12px', backgroundColor: '#f56565', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer', outline: 'none', fontSize: '16px', boxSizing: 'border-box' }}>＋ 記一筆</button>
                   </div>
@@ -722,12 +751,10 @@ function App() {
                       >
                         <div style={{ display: 'flex', alignItems: 'center', padding: '12px 16px', backgroundColor: '#ffffff', boxSizing: 'border-box' }}>
 
-                          {/* 區塊 1：左側分類圖示 */}
                           <div style={{ fontSize: '1.5em', marginRight: '12px', flexShrink: 0, width: '42px', height: '42px', backgroundColor: '#f8fafc', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e2e8f0' }}>
                             {EXPENSE_CATEGORIES.find(c => c.name === exp.category)?.icon || '❓'}
                           </div>
 
-                          {/* 區塊 2：中間明細與日期 */}
                           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '4px' }}>
                             <div style={{ fontSize: '1.05em', lineHeight: '1.2' }}>
                               {renderSmartDescription(exp)}
@@ -735,14 +762,12 @@ function App() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8em', color: '#718096' }}>
                               <span>{exp.category}</span>
                               <span style={{ fontSize: '0.6em' }}>●</span>
-                              {/* 💡 加上卡片圖示的 Day 0 */}
                               <span style={{ fontWeight: exp.day_number === 0 ? 600 : 'normal', color: exp.day_number === 0 ? '#3182ce' : 'inherit' }}>
                                 {exp.day_number === 0 ? '💳 事前預約' : `Day ${exp.day_number}`}
                               </span>
                             </div>
                           </div>
 
-                          {/* 區塊 3：右側金額與發票小標籤 */}
                           <div style={{ textAlign: 'right', marginLeft: '10px', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
                             <strong style={{ color: '#e53e3e', fontSize: '1.15em', lineHeight: '1.1' }}>
                               {Number(exp.amount).toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{exp.currency || 'JPY'}</span>
