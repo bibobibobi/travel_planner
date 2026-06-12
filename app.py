@@ -359,13 +359,27 @@ def handle_trips():
 
     return jsonify(result), 200
 
+# ====== 💡 修改：加上權限防護與退出行程邏輯 ======
 @app.route('/api/trips/<int:trip_id>', methods=['PUT', 'DELETE'])
+@jwt_required()
 def modify_trip(trip_id):
+    current_user_id = get_jwt_identity()
     trip = Trip.query.get_or_404(trip_id)
+    
     if request.method == 'DELETE':
-        db.session.delete(trip)
+        # 如果是擁有者，直接把行程連根拔起
+        if str(trip.user_id) == str(current_user_id):
+            db.session.delete(trip)
+        else:
+            # 如果是朋友(檢視者/編輯者)，只刪除 TripShare 裡面的關聯，達成「退出」效果
+            share_record = TripShare.query.filter_by(trip_id=trip_id, user_id=current_user_id).first()
+            if share_record:
+                db.session.delete(share_record)
+        
         db.session.commit()
         return jsonify({"status": "deleted"})
+    
+    # 處理 PUT 邏輯
     data = request.get_json()
     trip.title = data.get('title', trip.title)
     if 'start_date' in data: trip.start_date = datetime.strptime(data['start_date'], "%Y-%m-%d").date()

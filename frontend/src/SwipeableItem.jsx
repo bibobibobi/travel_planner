@@ -1,15 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-export default function SwipeableItem({ children, onEdit, onDelete, canEdit, isOpen, onOpen, onClose }) {
+export default function SwipeableItem({ children, onEdit, onDelete, canEdit, isOpen, onOpen, onClose, showEdit = true, deleteIcon = '🗑️' }) {
     const [translateX, setTranslateX] = useState(0);
     const [isDragging, setIsDragging] = useState(false);
     const startXRef = useRef(0);
-    // 新增：記住滑動開始時「當下的 X 座標」
     const currentTranslateXRef = useRef(0);
 
-    const MAX_SWIPE = -100;
+    // 新增：用來記錄本次動作究竟是「單純點擊」還是「拖曳滑動」
+    const wasDraggedRef = useRef(false);
 
-    // 💡 優化 1：監聽外部狀態，如果別人打開了，我就乖乖關起來
+    const MAX_SWIPE = showEdit ? -100 : -50;
+
     useEffect(() => {
         if (!isOpen && !isDragging) {
             setTranslateX(0);
@@ -19,21 +20,23 @@ export default function SwipeableItem({ children, onEdit, onDelete, canEdit, isO
     const handleStart = (clientX) => {
         if (!canEdit) return;
         startXRef.current = clientX;
-        currentTranslateXRef.current = translateX; // 記錄當下位置
+        currentTranslateXRef.current = translateX;
         setIsDragging(true);
+        wasDraggedRef.current = false; // 每次開始動作時，先重置拖曳狀態
     };
 
     const handleMove = (clientX) => {
         if (!canEdit || !isDragging) return;
         const diff = clientX - startXRef.current;
 
-        // 💡 優化 2：以「當下位置」為基準點，加上手指滑動的距離
-        let newX = currentTranslateXRef.current + diff;
+        // 如果移動距離大於 5 像素，就認定這是一次拖曳滑動，而不是點擊
+        if (Math.abs(diff) > 5) {
+            wasDraggedRef.current = true;
+        }
 
-        // 限制滑動範圍 (往左最多拉一點點彈性，往右不能超過 0)
+        let newX = currentTranslateXRef.current + diff;
         if (newX < MAX_SWIPE - 20) newX = MAX_SWIPE - 20;
         if (newX > 0) newX = 0;
-
         setTranslateX(newX);
     };
 
@@ -41,30 +44,44 @@ export default function SwipeableItem({ children, onEdit, onDelete, canEdit, isO
         if (!canEdit || !isDragging) return;
         setIsDragging(false);
 
-        // 💡 判斷邏輯升級：根據一開始的狀態，決定是展開還是關閉
         if (currentTranslateXRef.current === 0) {
-            // 本來是關的 -> 往左滑超過 30 就打開
             if (translateX < -30) {
                 setTranslateX(MAX_SWIPE);
-                if (onOpen) onOpen(); // 告訴大廳我打開了
+                if (onOpen) onOpen();
             } else {
                 setTranslateX(0);
             }
         } else {
-            // 本來是開的 -> 往右滑超過 30 就關閉
             if (translateX > MAX_SWIPE + 30) {
                 setTranslateX(0);
-                if (onClose) onClose(); // 告訴大廳我關了
+                if (onClose) onClose();
             } else {
                 setTranslateX(MAX_SWIPE);
             }
         }
     };
 
+    // 新增：點擊事件防火牆
+    const handleClickCapture = (e) => {
+        // 情況 1：如果剛才發生過拖曳滑動，攔截點擊事件，不讓它傳到內層的 selectTrip
+        if (wasDraggedRef.current) {
+            e.stopPropagation();
+            e.preventDefault();
+            return;
+        }
+
+        // 情況 2：如果卡片已經是滑開的狀態，此時點擊主要區域應該是想把它關起來，而不是點進去
+        if (translateX !== 0) {
+            e.stopPropagation();
+            e.preventDefault();
+            setTranslateX(0);
+            if (onClose) onClose();
+        }
+    };
+
     const onTouchStart = (e) => handleStart(e.touches[0].clientX);
     const onTouchMove = (e) => handleMove(e.touches[0].clientX);
     const onTouchEnd = handleEnd;
-
     const onMouseDown = (e) => handleStart(e.clientX);
     const onMouseMove = (e) => handleMove(e.clientX);
     const onMouseUp = handleEnd;
@@ -84,7 +101,7 @@ export default function SwipeableItem({ children, onEdit, onDelete, canEdit, isO
             top: 0,
             right: 0,
             bottom: 0,
-            width: '100px',
+            width: `${Math.abs(MAX_SWIPE)}px`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-evenly',
@@ -98,6 +115,7 @@ export default function SwipeableItem({ children, onEdit, onDelete, canEdit, isO
             backgroundColor: '#ffffff',
             transition: isDragging ? 'none' : 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
             transform: `translateX(${translateX}px)`,
+            userSelect: 'none',
             width: '100%',
             boxSizing: 'border-box',
         }
@@ -106,8 +124,10 @@ export default function SwipeableItem({ children, onEdit, onDelete, canEdit, isO
     return (
         <div style={styles.container}>
             <div style={styles.backgroundLayer}>
-                <button onClick={() => { setTranslateX(0); if (onClose) onClose(); onEdit(); }} style={{ background: '#edf2f7', border: 'none', borderRadius: '6px', padding: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>✏️</button>
-                <button onClick={() => { setTranslateX(0); if (onClose) onClose(); onDelete(); }} style={{ background: '#fff5f5', color: '#fc8181', border: 'none', borderRadius: '6px', padding: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>🗑️</button>
+                {showEdit && (
+                    <button onClick={() => { setTranslateX(0); if (onClose) onClose(); onEdit(); }} style={{ background: '#edf2f7', border: 'none', borderRadius: '6px', padding: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>✏️</button>
+                )}
+                <button onClick={() => { setTranslateX(0); if (onClose) onClose(); onDelete(); }} style={{ background: '#fff5f5', color: '#fc8181', border: 'none', borderRadius: '6px', padding: '8px', cursor: 'pointer', fontSize: '0.9rem' }}>{deleteIcon}</button>
             </div>
             <div
                 style={styles.foregroundLayer}
@@ -118,6 +138,7 @@ export default function SwipeableItem({ children, onEdit, onDelete, canEdit, isO
                 onMouseMove={onMouseMove}
                 onMouseUp={onMouseUp}
                 onMouseLeave={onMouseLeave}
+                onClickCapture={handleClickCapture} // 💡 在這裡綁定防火牆
             >
                 {children}
             </div>
