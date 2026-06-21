@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import Auth from './Auth'
 import SwipeableItem from './SwipeableItem'
+// 💡 新增引入 socket.io-client
+import { io } from 'socket.io-client' 
 import './App.css'
 
 function App() {
@@ -39,11 +41,47 @@ function App() {
   const [isCopied, setIsCopied] = useState(false);
 
   const [openSwipeId, setOpenSwipeId] = useState(null);
+  
+  // 💡 新增：用來儲存 WebSocket 連線實例的狀態
+  const [socket, setSocket] = useState(null);
 
   useEffect(() => localStorage.setItem('travelBaseCurrency', baseCurrency), [baseCurrency]);
 
   const BASE_URL = import.meta.env.VITE_API_URL || '';
   const API_BASE = `${BASE_URL}/api`;
+
+  // 💡 新增 1：初始化 WebSocket 連線
+  useEffect(() => {
+    const newSocket = io(BASE_URL || window.location.origin, {
+      path: '/socket.io',
+      transports: ['websocket', 'polling']
+    });
+    setSocket(newSocket);
+
+    // 當元件卸載時關閉連線，避免記憶體洩漏
+    return () => newSocket.close();
+  }, [BASE_URL]);
+
+  // 💡 新增 2：管理房間加入/離開與監聽推播事件
+  useEffect(() => {
+    if (socket && currentTrip) {
+      // 告訴伺服器：我進入這個行程了，請把我加進該行程的廣播房間
+      socket.emit('join_trip', { trip_id: currentTrip.id });
+
+      // 註冊廣播接收器：收到更新訊號就重新拉取該分頁的最新資料
+      socket.on('itinerary_updated', () => fetchItems(currentTrip.id));
+      socket.on('shopping_updated', () => fetchShopping(currentTrip.id));
+      socket.on('expenses_updated', () => fetchExpenses(currentTrip.id));
+
+      // 清理函數：當退回大廳或切換行程時，離開舊房間並取消監聽
+      return () => {
+        socket.emit('leave_trip', { trip_id: currentTrip.id });
+        socket.off('itinerary_updated');
+        socket.off('shopping_updated');
+        socket.off('expenses_updated');
+      };
+    }
+  }, [socket, currentTrip]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -176,7 +214,6 @@ function App() {
   const EXPENSE_CATEGORIES = [{ name: '飲食', icon: '🍔' }, { name: '交通', icon: '🚗' }, { name: '購物', icon: '🛍️' }, { name: '住宿', icon: '🛏️' }, { name: '其他', icon: '❓' }];
   const CURRENCY_OPTIONS = [{ code: 'JPY', label: 'JPY (日圓)' }, { code: 'KRW', label: 'KRW (韓元)' }, { code: 'THB', label: 'THB (泰銖)' }, { code: 'USD', label: 'USD (美元)' }, { code: 'EUR', label: 'EUR (歐元)' }, { code: 'VND', label: 'VND (越南盾)' }, { code: 'TWD', label: 'TWD (台幣)' },];
 
-  // 💡 多幣別計算邏輯
   const filteredExpenses = Array.isArray(expenses) ? (expenseFilterDay === -1 ? expenses : expenses.filter(exp => exp.day_number === expenseFilterDay)) : [];
   const totalTwdExpense = filteredExpenses.reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0);
   const getDailyTotalTwdExpense = (day) => { return Array.isArray(expenses) ? expenses.filter(e => e.day_number === day).reduce((sum, exp) => sum + (Number(exp.twd_amount) || 0), 0) : 0; };
@@ -640,8 +677,7 @@ function App() {
                   </select>
                 </div>
               </div>
-
-              {/* 💡 多幣別頂部總計 */}
+              
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flex: '0 0 auto' }}>
                 {Object.keys(totalsByCurrency).length > 0 ? (
                   Object.entries(totalsByCurrency).map(([cur, amt]) => (
@@ -660,7 +696,6 @@ function App() {
               </div>
             </div>
 
-            {/* 💡 多幣別分類卡片 */}
             {Object.keys(categoryTotals).length > 0 && (
               <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '20px', WebkitOverflowScrolling: 'touch' }}>
                 {EXPENSE_CATEGORIES.map(cat => {
@@ -668,7 +703,7 @@ function App() {
                   return (
                     <div key={cat.name} style={{ flex: '0 0 auto', backgroundColor: '#f8fafc', padding: '12px 15px', borderRadius: '10px', border: '1px solid #e2e8f0', minWidth: '100px', boxSizing: 'border-box' }}>
                       <div style={{ fontSize: '0.9em', color: '#718096', marginBottom: '6px', fontWeight: 600 }}>{cat.icon} {cat.name}</div>
-
+                      
                       {Object.entries(categoryTotals[cat.name].currencies).map(([cur, amt]) => (
                         <div key={cur} style={{ fontSize: '1.1em', color: '#2d3748', fontWeight: 600, lineHeight: '1.2' }}>
                           {amt.toLocaleString()} <span style={{ fontSize: '0.6em', color: '#a0aec0' }}>{cur}</span>
@@ -750,7 +785,7 @@ function App() {
                         onClose={() => setOpenSwipeId(null)}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', padding: '12px 16px', backgroundColor: '#ffffff', boxSizing: 'border-box' }}>
-
+                          
                           <div style={{ fontSize: '1.5em', marginRight: '12px', flexShrink: 0, width: '42px', height: '42px', backgroundColor: '#f8fafc', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e2e8f0' }}>
                             {EXPENSE_CATEGORIES.find(c => c.name === exp.category)?.icon || '❓'}
                           </div>
