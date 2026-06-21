@@ -178,17 +178,19 @@ export default function Auth({ onLoginSuccess }) {
                             required
                         />
                     </div>
-                    <div style={styles.formGroup}>
-                        <label style={styles.label}>邀請碼</label>
-                        <input
-                            type="text"
-                            value={inviteCode}
-                            onChange={(e) => setInviteCode(e.target.value)}
-                            style={styles.input}
-                            placeholder="請輸入邀請碼"
-                            required
-                        />
-                    </div>
+                    {!isLoginMode && (
+                        <div style={styles.formGroup}>
+                            <label style={styles.label}>邀請碼</label>
+                            <input
+                                type="text"
+                                value={inviteCode}
+                                onChange={(e) => setInviteCode(e.target.value)}
+                                style={styles.input}
+                                placeholder="請輸入邀請碼"
+                                required
+                            />
+                        </div>
+                    )}
 
                     <button type="submit" disabled={isLoading} style={styles.button}>
                         {isLoading ? '處理中...' : (isLoginMode ? '登入' : '註冊')}
