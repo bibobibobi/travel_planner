@@ -88,17 +88,17 @@
 
 ## 專案畫面
 
-### 每日旅遊行程
+### 旅遊行程頁面
 
-![image]()
+![image](https://github.com/bibobibobi/travel_planner/blob/main/大廳頁面.png)
 
 ### 拖曳調整行程
 
-![image]()
+![image](https://github.com/bibobibobi/travel_planner/blob/main/行程拖曳.gif)
 
 ### 旅遊費用管理
 
-![image]()
+![image](https://github.com/bibobibobi/travel_planner/blob/main/%E8%A8%98%E5%B8%B3.gif)
 
 ## 專案開發方式
 
