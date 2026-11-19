@@ -90,15 +90,15 @@
 
 ### 旅遊行程頁面
 
-![image](https://github.com/bibobibobi/travel_planner/blob/main/大廳頁面.png)
+<img src="https://github.com/bibobibobi/travel_planner/blob/main/大廳頁面.png" width="600" alt="Demo" />
 
 ### 拖曳調整行程
 
-![image](https://github.com/bibobibobi/travel_planner/blob/main/行程拖曳.gif)
+<img src="https://github.com/bibobibobi/travel_planner/blob/main/行程拖曳.gif" width="600" alt="Demo" />
 
 ### 旅遊費用管理
 
-![image](https://github.com/bibobibobi/travel_planner/blob/main/%E8%A8%98%E5%B8%B3.gif)
+<img src="https://github.com/bibobibobi/travel_planner/blob/main/記帳.gif" width="600" alt="Demo" />
 
 ## 專案開發方式
 
