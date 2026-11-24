@@ -1,55 +1,47 @@
-from flask import Flask, request, jsonify, send_from_directory
-from flask_sqlalchemy import SQLAlchemy
-from flask_cors import CORS
-from datetime import datetime
-import os
-from werkzeug.utils import secure_filename
-import json
-from dotenv import load_dotenv
 import http.client
+import json
+import os
 import time
+from datetime import datetime
 
-# 💡 密碼加密與 JWT 套件
-from werkzeug.security import generate_password_hash, check_password_hash
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
-
-# ====== 💡 新增：用來產生分享安全代碼的加密工具 ======
-from itsdangerous import URLSafeTimedSerializer
+from dotenv import load_dotenv
+from flask import Blueprint, Flask, current_app, jsonify, request, send_from_directory
+from flask_cors import CORS
+from flask_jwt_extended import (
+    JWTManager,
+    create_access_token,
+    get_jwt_identity,
+    jwt_required,
+)
 
 # ====== 💡 新增：WebSockets 即時通訊套件 ======
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_socketio import SocketIO, join_room, leave_room
+from flask_sqlalchemy import SQLAlchemy
+from google.api_core.exceptions import GoogleAPIError
+
+# ====== 💡 新增：用來產生分享安全代碼的加密工具 ======
+from itsdangerous import BadData, URLSafeTimedSerializer
+
+# 💡 密碼加密與 JWT 套件
+from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 
 load_dotenv()
 
 # 新增的 AI 與圖片處理套件
+import io
+
 import google.generativeai as genai
 from PIL import Image
-import io
 
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# 💡 JWT 密鑰設定
-app.config['JWT_SECRET_KEY'] = os.environ.get("JWT_SECRET_KEY")
-jwt = JWTManager(app)
-
-# ====== 💡 分享連結專用的秘密金鑰與發放工具 ======
-app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "fallback_secret_key")
-share_serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
-
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
-CORS(app)
-db = SQLAlchemy(app)
-
-# ====== 💡 初始化 SocketIO ======
-# 允許跨域連線，並自動選擇最佳的非同步模式（例如 eventlet）
-socketio = SocketIO(app, cors_allowed_origins="*")
+api = Blueprint("api", __name__)
+db = SQLAlchemy()
+jwt = JWTManager()
+socketio = SocketIO()
+DEFAULT_UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+VALID_SHARE_ROLES = ('viewer', 'editor')
 
 # ====== 自動匯率 API 與 1小時快取機制 ======
 rate_cache = {}
@@ -76,8 +68,14 @@ def get_twd_rate(base_currency):
             rate = float(parsed["rates"]["TWD"])
             rate_cache[base_currency] = {'rate': rate, 'timestamp': now}
             return rate
-    except Exception as e:
-        print("API 匯率獲取失敗:", e)
+    except (
+        GoogleAPIError,
+        OSError,
+        http.client.HTTPException,
+        TypeError,
+        ValueError,
+    ) as error:
+        print("API 匯率獲取失敗:", error)
         
     if base_currency in rate_cache:
         return rate_cache[base_currency]['rate']
@@ -147,9 +145,6 @@ class ShoppingItem(db.Model):
     is_bought = db.Column(db.Boolean, default=False)
     image_url = db.Column(db.String(200), nullable=True)
 
-with app.app_context():
-    db.create_all()
-
 # ================= WebSockets 房間與事件管理 =================
 
 @socketio.on('join_trip')
@@ -170,16 +165,16 @@ def on_leave(data):
 
 # ================= API 路由 =================
 
-@app.route('/')
+@api.route('/')
 def index():
     return jsonify({"message": "API 伺服器運作中！"})
 
-@app.route('/api/uploads/<filename>')
+@api.route('/api/uploads/<filename>')
 def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    return send_from_directory(current_app.config['UPLOAD_FOLDER'], filename)
 
 # ====== 註冊與登入 API ======
-@app.route('/api/register', methods=['POST'])
+@api.route('/api/register', methods=['POST'])
 def register():
     data = request.get_json()
     email = data.get('email')
@@ -205,7 +200,7 @@ def register():
 
     return jsonify({"message": "註冊成功！"}), 201
 
-@app.route('/api/login', methods=['POST'])
+@api.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
     email = data.get('email')
@@ -224,7 +219,7 @@ def login():
     }), 200
 
 # ====== 行程分享相關 API ======
-@app.route('/api/trips/generate-share', methods=['POST'])
+@api.route('/api/trips/generate-share', methods=['POST'])
 @jwt_required()
 def generate_share():
     current_user_id = get_jwt_identity()
@@ -232,14 +227,18 @@ def generate_share():
     trip_id = data.get('trip_id')
     role = data.get('role', 'viewer')
 
+    if role not in VALID_SHARE_ROLES:
+        return jsonify({"error": "分享角色必須是 viewer 或 editor"}), 400
+
     trip = Trip.query.get(trip_id)
     if not trip or str(trip.user_id) != str(current_user_id):
         return jsonify({"error": "找不到行程或您無權分享此行程"}), 403
 
-    token = share_serializer.dumps({'trip_id': trip_id, 'role': role})
+    serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
+    token = serializer.dumps({'trip_id': trip_id, 'role': role})
     return jsonify({"share_token": token}), 200
 
-@app.route('/api/trips/accept-share', methods=['POST'])
+@api.route('/api/trips/accept-share', methods=['POST'])
 @jwt_required()
 def accept_share():
     current_user_id = get_jwt_identity()
@@ -247,11 +246,15 @@ def accept_share():
     token = data.get('share_token')
 
     try:
-        payload = share_serializer.loads(token, max_age=604800)
+        serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
+        payload = serializer.loads(token, max_age=604800)
         trip_id = payload['trip_id']
         role = payload['role']
-    except Exception as e:
+    except (BadData, KeyError, TypeError):
         return jsonify({"error": "分享連結無效或已過期，請重新索取"}), 400
+
+    if role not in VALID_SHARE_ROLES:
+        return jsonify({"error": "分享連結角色無效"}), 400
 
     trip = Trip.query.get(trip_id)
     if not trip:
@@ -273,7 +276,8 @@ def accept_share():
     return jsonify({"message": "成功加入行程！", "role": role}), 200
 
 # ====== 🤖 AI 掃描發票 API ======
-@app.route('/api/scan-receipt', methods=['POST'])
+@api.route('/api/scan-receipt', methods=['POST'])
+@jwt_required()
 def scan_receipt():
     try:
         if 'receipt_image' not in request.files:
@@ -321,10 +325,10 @@ def scan_receipt():
         parsed_data = json.loads(res_text)
         return jsonify(parsed_data), 200
 
-    except Exception as e:
-        return jsonify({"error": f"後端真實錯誤: {str(e)}"}), 500
+    except (AttributeError, GoogleAPIError, OSError, TypeError, ValueError) as error:
+        return jsonify({"error": f"後端真實錯誤: {error!s}"}), 500
 
-@app.route('/api/trips', methods=['GET', 'POST'])
+@api.route('/api/trips', methods=['GET', 'POST'])
 @jwt_required()
 def handle_trips():
     current_user_id = get_jwt_identity() 
@@ -371,23 +375,32 @@ def handle_trips():
 
     return jsonify(result), 200
 
-@app.route('/api/trips/<int:trip_id>', methods=['PUT', 'DELETE'])
+@api.route('/api/trips/<int:trip_id>', methods=['PUT', 'DELETE'])
 @jwt_required()
 def modify_trip(trip_id):
     current_user_id = get_jwt_identity()
     trip = Trip.query.get_or_404(trip_id)
-    
+    is_owner = str(trip.user_id) == str(current_user_id)
+    share_record = None
+    if not is_owner:
+        share_record = TripShare.query.filter_by(
+            trip_id=trip_id, user_id=current_user_id
+        ).first()
+
     if request.method == 'DELETE':
-        if str(trip.user_id) == str(current_user_id):
+        if is_owner:
             db.session.delete(trip)
+        elif share_record:
+            db.session.delete(share_record)
         else:
-            share_record = TripShare.query.filter_by(trip_id=trip_id, user_id=current_user_id).first()
-            if share_record:
-                db.session.delete(share_record)
-        
+            return jsonify({"error": "您無權刪除此行程"}), 403
+
         db.session.commit()
         return jsonify({"status": "deleted"})
-    
+
+    if not is_owner and (not share_record or share_record.role != 'editor'):
+        return jsonify({"error": "您無權修改此行程"}), 403
+
     data = request.get_json()
     trip.title = data.get('title', trip.title)
     if 'start_date' in data: trip.start_date = datetime.strptime(data['start_date'], "%Y-%m-%d").date()
@@ -395,11 +408,35 @@ def modify_trip(trip_id):
     db.session.commit()
     return jsonify({"status": "success"})
 
-@app.route('/api/items', methods=['GET', 'POST'])
+
+def has_trip_access(trip_id, user_id, require_editor=False):
+    """Return whether a user can read or edit data belonging to a trip."""
+    try:
+        trip_id = int(trip_id)
+    except (TypeError, ValueError):
+        return False
+
+    trip = db.session.get(Trip, trip_id)
+    if not trip:
+        return False
+    if str(trip.user_id) == str(user_id):
+        return True
+
+    share_record = TripShare.query.filter_by(trip_id=trip_id, user_id=user_id).first()
+    if not share_record:
+        return False
+    return not require_editor or share_record.role == 'editor'
+
+
+@api.route('/api/items', methods=['GET', 'POST'])
+@jwt_required()
 def handle_items():
+    current_user_id = get_jwt_identity()
     if request.method == 'POST':
         data = request.get_json()
         trip_id = data.get('trip_id')
+        if not has_trip_access(trip_id, current_user_id, require_editor=True):
+            return jsonify({"error": "您無權修改此行程"}), 403
         new_item = ItineraryItem(trip_id=trip_id, day_number=data.get('day_number', 1), order_index=data.get('order_index', 0), place_name=data.get('content'), start_time=data.get('start_time'), memo=data.get('memo'), map_url=data.get('map_url'), category=data.get('category', '景點'))
         db.session.add(new_item)
         db.session.commit()
@@ -408,13 +445,19 @@ def handle_items():
         return jsonify({"status": "success", "id": str(new_item.id)}), 201
         
     trip_id = request.args.get('trip_id')
+    if not has_trip_access(trip_id, current_user_id):
+        return jsonify({"error": "您無權查看此行程"}), 403
     items = ItineraryItem.query.filter_by(trip_id=trip_id).order_by(ItineraryItem.order_index).all()
     return jsonify([{"id": str(item.id), "content": item.place_name, "order_index": item.order_index, "day_number": item.day_number, "start_time": item.start_time, "memo": item.memo, "map_url": item.map_url, "category": item.category} for item in items])
 
-@app.route('/api/items/<int:item_id>', methods=['PUT', 'DELETE'])
+@api.route('/api/items/<int:item_id>', methods=['PUT', 'DELETE'])
+@jwt_required()
 def modify_item(item_id):
+    current_user_id = get_jwt_identity()
     item = ItineraryItem.query.get_or_404(item_id)
     trip_id = item.trip_id
+    if not has_trip_access(trip_id, current_user_id, require_editor=True):
+        return jsonify({"error": "您無權修改此行程"}), 403
     if request.method == 'DELETE':
         db.session.delete(item)
         db.session.commit()
@@ -434,8 +477,10 @@ def modify_item(item_id):
     socketio.emit('itinerary_updated', {'action': 'update'}, room=f"trip_{trip_id}")
     return jsonify({"status": "success"})
 
-@app.route('/api/items/reorder', methods=['PUT'])
+@api.route('/api/items/reorder', methods=['PUT'])
+@jwt_required()
 def reorder_items():
+    current_user_id = get_jwt_identity()
     data = request.get_json()
     reordered_items = data.get('reordered_items', [])
     trip_id = None
@@ -443,6 +488,8 @@ def reorder_items():
     for item_data in reordered_items:
         item = ItineraryItem.query.get(int(item_data['id']))
         if item:
+            if not has_trip_access(item.trip_id, current_user_id, require_editor=True):
+                return jsonify({"error": "您無權修改此行程"}), 403
             trip_id = item.trip_id # 抓取 trip_id 供推播使用
             item.order_index = item_data['order_index']
             if 'day_number' in item_data: item.day_number = item_data['day_number']
@@ -453,10 +500,14 @@ def reorder_items():
         socketio.emit('itinerary_updated', {'action': 'reorder'}, room=f"trip_{trip_id}")
     return jsonify({"status": "success"})
 
-@app.route('/api/expenses', methods=['GET', 'POST'])
+@api.route('/api/expenses', methods=['GET', 'POST'])
+@jwt_required()
 def handle_expenses():
+    current_user_id = get_jwt_identity()
     if request.method == 'POST':
         trip_id = request.form.get('trip_id')
+        if not has_trip_access(trip_id, current_user_id, require_editor=True):
+            return jsonify({"error": "您無權修改此行程"}), 403
         day_number = request.form.get('day_number', 1)
         amount = request.form.get('amount')
         currency = request.form.get('currency', 'JPY')
@@ -468,7 +519,7 @@ def handle_expenses():
             file = request.files['receipt_image']
             if file.filename != '':
                 filename = secure_filename(f"exp_{int(datetime.now().timestamp())}_{file.filename}")
-                file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+                file.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
 
         rate = get_twd_rate(currency)
@@ -487,6 +538,8 @@ def handle_expenses():
         return jsonify({"status": "success"}), 201
 
     trip_id = request.args.get('trip_id')
+    if not has_trip_access(trip_id, current_user_id):
+        return jsonify({"error": "您無權查看此行程"}), 403
     expenses = Expense.query.filter_by(trip_id=trip_id).order_by(Expense.id.desc()).all()
     return jsonify([{
         "id": str(exp.id), "amount": exp.amount, "twd_amount": getattr(exp, 'twd_amount', 0), 
@@ -494,10 +547,14 @@ def handle_expenses():
         "day_number": exp.day_number, "image_url": exp.image_url
     } for exp in expenses])
 
-@app.route('/api/expenses/<int:exp_id>', methods=['PUT', 'DELETE'])
+@api.route('/api/expenses/<int:exp_id>', methods=['PUT', 'DELETE'])
+@jwt_required()
 def handle_single_expense(exp_id):
+    current_user_id = get_jwt_identity()
     exp = Expense.query.get_or_404(exp_id)
     trip_id = exp.trip_id
+    if not has_trip_access(trip_id, current_user_id, require_editor=True):
+        return jsonify({"error": "您無權修改此行程"}), 403
     
     if request.method == 'DELETE':
         db.session.delete(exp)
@@ -527,10 +584,14 @@ def handle_single_expense(exp_id):
     socketio.emit('expenses_updated', {'action': 'update'}, room=f"trip_{trip_id}")
     return jsonify({"status": "success"})
 
-@app.route('/api/shopping', methods=['GET', 'POST'])
+@api.route('/api/shopping', methods=['GET', 'POST'])
+@jwt_required()
 def handle_shopping():
+    current_user_id = get_jwt_identity()
     if request.method == 'POST':
         trip_id = request.form.get('trip_id')
+        if not has_trip_access(trip_id, current_user_id, require_editor=True):
+            return jsonify({"error": "您無權修改此行程"}), 403
         name = request.form.get('name')
         location = request.form.get('location', '')
         image_url = None
@@ -538,7 +599,7 @@ def handle_shopping():
             file = request.files['item_image']
             if file.filename != '':
                 filename = secure_filename(f"shop_{int(datetime.now().timestamp())}_{file.filename}")
-                file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+                file.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
         new_shop = ShoppingItem(trip_id=trip_id, name=name, location=location, is_bought=False, image_url=image_url)
         db.session.add(new_shop)
@@ -548,13 +609,19 @@ def handle_shopping():
         return jsonify({"status": "success", "id": new_shop.id}), 201
 
     trip_id = request.args.get('trip_id')
+    if not has_trip_access(trip_id, current_user_id):
+        return jsonify({"error": "您無權查看此行程"}), 403
     items = ShoppingItem.query.filter_by(trip_id=trip_id).order_by(ShoppingItem.id).all()
     return jsonify([{"id": str(i.id), "name": i.name, "location": i.location, "is_bought": i.is_bought, "image_url": i.image_url} for i in items])
 
-@app.route('/api/shopping/<int:item_id>', methods=['PUT', 'DELETE'])
+@api.route('/api/shopping/<int:item_id>', methods=['PUT', 'DELETE'])
+@jwt_required()
 def modify_shopping(item_id):
+    current_user_id = get_jwt_identity()
     item = ShoppingItem.query.get_or_404(item_id)
     trip_id = item.trip_id
+    if not has_trip_access(trip_id, current_user_id, require_editor=True):
+        return jsonify({"error": "您無權修改此行程"}), 403
     
     if request.method == 'DELETE':
         db.session.delete(item)
@@ -568,6 +635,39 @@ def modify_shopping(item_id):
     socketio.emit('shopping_updated', {'action': 'update'}, room=f"trip_{trip_id}")
     return jsonify({"status": "success"})
 
+
+def create_app(test_config=None):
+    """Create an application instance with injectable settings for tests."""
+    flask_app = Flask(__name__)
+    flask_app.config.from_mapping(
+        SQLALCHEMY_DATABASE_URI=os.environ.get('DATABASE_URL'),
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        JWT_SECRET_KEY=os.environ.get("JWT_SECRET_KEY"),
+        SECRET_KEY=os.environ.get("SECRET_KEY", "fallback_secret_key"),
+        UPLOAD_FOLDER=DEFAULT_UPLOAD_FOLDER,
+        SOCKETIO_ASYNC_MODE=None,
+    )
+
+    if test_config:
+        flask_app.config.update(test_config)
+
+    os.makedirs(flask_app.config['UPLOAD_FOLDER'], exist_ok=True)
+    CORS(flask_app)
+    db.init_app(flask_app)
+    jwt.init_app(flask_app)
+    socketio.init_app(
+        flask_app,
+        cors_allowed_origins="*",
+        async_mode=flask_app.config['SOCKETIO_ASYNC_MODE'],
+    )
+    flask_app.register_blueprint(api)
+    return flask_app
+
+
+app = create_app()
+
 if __name__ == '__main__':
     # 💡 啟動時改用 socketio.run 來驅動 Flask 伺服器
+    with app.app_context():
+        db.create_all()
     socketio.run(app, host='0.0.0.0', debug=True, port=5001)
