@@ -5,7 +5,9 @@ import os
 import re
 import threading
 import time
+import uuid
 from datetime import datetime
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
@@ -91,6 +93,19 @@ def parse_allowed_origins(value):
         if origin not in result:
             result.append(origin)
     return result
+
+
+def parse_health_check_timeout_seconds(value):
+    """Validate a health-check timeout and preserve its decimal precision."""
+    try:
+        timeout = Decimal(str(value))
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError(
+            'HEALTH_CHECK_TIMEOUT_SECONDS must be between 0 and 30 seconds'
+        ) from error
+    if not timeout.is_finite() or not Decimal(0) < timeout <= Decimal(30):
+        raise ValueError('HEALTH_CHECK_TIMEOUT_SECONDS must be between 0 and 30 seconds')
+    return timeout
 
 # ====== 自動匯率 API 與 1小時快取機制 ======
 rate_cache = {}
@@ -365,7 +380,7 @@ def ready():
         # PostgreSQL's timeout applies only to this transaction. SQLite (used by
         # tests) does not support this setting, so it intentionally skips it.
         if db.session.get_bind().dialect.name == 'postgresql':
-            timeout = f"{int(current_app.config['HEALTH_CHECK_TIMEOUT_SECONDS'] * 1000)}ms"
+            timeout = f"{current_app.config['HEALTH_CHECK_STATEMENT_TIMEOUT_MILLISECONDS']}ms"
             db.session.execute(text("SELECT set_config('statement_timeout', :timeout, true)"),
                                {'timeout': timeout})
         db.session.execute(text('SELECT 1'))
@@ -377,8 +392,28 @@ def ready():
 
 
 @api.route('/api/uploads/<filename>')
+@jwt_required()
 def uploaded_file(filename):
-    return send_from_directory(current_app.config['UPLOAD_FOLDER'], filename)
+    """Serve an upload only to users who can still read its trip."""
+    image_url = f"/api/uploads/{filename}"
+    trip_ids = {
+        trip_id for (trip_id,) in db.session.query(Expense.trip_id).filter_by(image_url=image_url)
+    }
+    trip_ids.update(
+        trip_id for (trip_id,) in db.session.query(ShoppingItem.trip_id).filter_by(image_url=image_url)
+    )
+    if not trip_ids:
+        return jsonify({"error": "圖片不存在"}), 404
+
+    current_user_id = get_jwt_identity()
+    if not all(has_trip_access(trip_id, current_user_id) for trip_id in trip_ids):
+        return jsonify({"error": "您沒有查看此圖片的權限"}), 403
+    response = send_from_directory(current_app.config['UPLOAD_FOLDER'], filename)
+    # The response is personalized by the JWT and trip membership.  Never let a
+    # browser or intermediary retain it for another user.
+    response.cache_control.private = True
+    response.cache_control.no_store = True
+    return response
 
 # ====== 註冊與登入 API ======
 @api.route('/api/register', methods=['POST'])
@@ -731,7 +766,7 @@ def handle_expenses():
         if 'receipt_image' in request.files:
             file = request.files['receipt_image']
             if file.filename != '':
-                filename = secure_filename(f"exp_{int(datetime.now().timestamp())}_{file.filename}")
+                filename = secure_filename(f"exp_{uuid.uuid4().hex}_{file.filename}")
                 file.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
 
@@ -811,7 +846,7 @@ def handle_shopping():
         if 'item_image' in request.files:
             file = request.files['item_image']
             if file.filename != '':
-                filename = secure_filename(f"shop_{int(datetime.now().timestamp())}_{file.filename}")
+                filename = secure_filename(f"shop_{uuid.uuid4().hex}_{file.filename}")
                 file.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
         new_shop = ShoppingItem(trip_id=trip_id, name=name, location=location, is_bought=False, image_url=image_url)
@@ -861,19 +896,29 @@ def create_app(test_config=None):
         UPLOAD_FOLDER=DEFAULT_UPLOAD_FOLDER,
         SOCKETIO_ASYNC_MODE=os.environ.get('SOCKETIO_ASYNC_MODE', 'threading'),
         ALLOWED_ORIGINS=os.environ.get('ALLOWED_ORIGINS'),
-        HEALTH_CHECK_TIMEOUT_SECONDS=float(os.environ.get('HEALTH_CHECK_TIMEOUT_SECONDS', '5')),
+        HEALTH_CHECK_TIMEOUT_SECONDS=os.environ.get('HEALTH_CHECK_TIMEOUT_SECONDS', '5'),
     )
 
     if test_config:
         flask_app.config.update(test_config)
 
-    health_timeout = flask_app.config['HEALTH_CHECK_TIMEOUT_SECONDS']
-    if not isinstance(health_timeout, (int, float)) or not 0 < health_timeout <= 30:
-        raise ValueError('HEALTH_CHECK_TIMEOUT_SECONDS must be between 0 and 30 seconds')
+    health_timeout = parse_health_check_timeout_seconds(
+        flask_app.config['HEALTH_CHECK_TIMEOUT_SECONDS']
+    )
+    flask_app.config['HEALTH_CHECK_TIMEOUT_SECONDS'] = float(health_timeout)
+    flask_app.config['HEALTH_CHECK_STATEMENT_TIMEOUT_MILLISECONDS'] = int(
+        (health_timeout * 1000).to_integral_value(rounding=ROUND_CEILING)
+    )
     database_uri = flask_app.config['SQLALCHEMY_DATABASE_URI']
     if isinstance(database_uri, str) and database_uri.startswith('postgresql'):
         flask_app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-            'connect_args': {'connect_timeout': health_timeout},
+            # libpq/psycopg2 only accepts an integer number of seconds here.
+            # Round positive fractional values up so they never disable the timeout.
+            'connect_args': {
+                'connect_timeout': int(
+                    health_timeout.to_integral_value(rounding=ROUND_CEILING)
+                )
+            },
         }
 
     async_mode = flask_app.config['SOCKETIO_ASYNC_MODE']
