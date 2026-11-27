@@ -1,0 +1,12 @@
+**
+!Dockerfile.verify
+!requirements.txt
+!requirements-prod.txt
+!requirements-dev.txt
+!app.py
+!tests/
+!tests/**
+!verify/
+!verify/**
+**/__pycache__/
+**/*.pyc

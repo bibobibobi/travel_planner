@@ -51,6 +51,21 @@
 - **Database**：使用 PostgreSQL 儲存系統資料。
 - **Infrastructure**：部署於 OCI Ubuntu Linux 主機。
 
+### Socket.IO 執行設定
+
+`SOCKETIO_ASYNC_MODE` 預設為 `threading`，供本機開發及 CI 使用；正式環境的 Gevent worker 必須設定為 `gevent`。可用值另包含 `eventlet`，但不得讓 worker 類型與模式不一致。`.env.example` 列出其餘必要環境變數；密鑰與資料庫連線資訊應由各環境安全提供。
+
+正式部署使用 Ubuntu / Python 3.10 虛擬環境，安裝 `pip install -r requirements-prod.txt`。此檔引用基本依賴並另外指定 Gunicorn、gevent、gevent-websocket；開發測試依賴則使用 `requirements-dev.txt`。Eventlet 目前保留。
+
+`travel.service` 未來應在 `[Service]` 中加入 `Environment=SOCKETIO_ASYNC_MODE=gevent`，並使用該虛擬環境中的 Gunicorn，例如：
+
+```ini
+Environment=SOCKETIO_ASYNC_MODE=gevent
+ExecStart=/path/to/venv/bin/gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 -b 127.0.0.1:5001 app:app
+```
+
+請依實際路徑與既有 service 設定調整，並確保 Nginx 代理 `/socket.io/` 的 WebSocket upgrade。Gunicorn 的 Socket.IO 部署應維持單 worker；多程序擴充需要相容的負載平衡、sticky sessions 與共享訊息佇列。本設定不處理 Socket.IO 的 JWT 驗證及 room 授權，正式使用前仍須另行修復。
+
 ## 技術架構
 
 | 項目 | 使用技術 |
