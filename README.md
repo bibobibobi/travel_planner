@@ -159,3 +159,24 @@ sha256sum -c travel-app-完整CommitSHA.tar.gz.sha256
 `dist/` 僅允許 HTML、JavaScript、CSS、SVG、常見圖片及字型等指定副檔名，且不允許隱藏項目或敏感目錄。加入其他靜態資源格式時可能需要更新 `scripts/package_release.py` 的允許清單。檔名及副檔名檢查無法保證檔案內容不含秘密資訊。
 
 壓縮檔及校驗檔無法同時原子發布：若發布第二個檔案失敗，程式會移除本次發布的第一個檔案；若程序或系統在兩次操作之間突然終止，仍可能留下單獨的檔案。遇到這種情況請先人工檢查並移除不完整的一組後再重試。輸出目錄須支援同一檔案系統的 hard link。此腳本只建立產物，不執行部署。
+
+### 伺服器端 Artifact Validator
+
+未來的解壓縮流程前，先在伺服器上驗證上傳產物：
+
+```bash
+python scripts/validate_artifact.py \
+  --artifact /opt/travel-app/incoming/artifact.tar.gz \
+  --revision COMMIT_SHA \
+  --sha256 SHA256
+```
+
+`COMMIT_SHA` 必須是 40 位小寫十六進位 Commit SHA，`SHA256` 必須是 64 位小寫十六進位摘要。成功時會輸出 `VALIDATION_OK`、revision、摘要、檔案數與未壓縮內容大小；任何拒絕情況均寫入安全的 stderr 訊息並以非零狀態結束。
+
+Validator 是只使用 Python 3.10 以上標準函式庫的獨立腳本。它在 Linux 使用不跟隨最終 symbolic link 的方式開啟來源，拒絕非一般檔案或 hard link，將資料與 SHA256 串流寫入有容量限制的私有快照，並只驗證該快照；不會解壓縮到磁碟，也不會執行 Archive 中任何內容。它僅接受 `scripts/package_release.py` 目前產生的格式：必要後端檔案與 `dist/` 內允許的靜態資源。
+
+限制為：壓縮來源 10 MiB、檔案內容總和 50 MiB、單一檔案 20 MiB、最多 1,000 個 member、路徑最多 512 UTF-8 bytes 與 16 層。完整解壓縮資料流（包含 tar metadata、PAX header 與 padding）另限制為 60 MiB。連結、sparse/特殊 member、路徑穿越、隱藏或敏感 `dist/` 項目、重複或大小寫衝突路徑、損壞 gzip/tar 與 gzip 尾端額外資料都會被拒絕。
+
+SHA256 只證明讀取到的位元組符合提供的摘要，**不驗證發布者身分**。驗證也不會鎖定原始路徑，來源檔案在成功後仍可能被替換；未來部署流程必須對即將解壓縮的同一檔案安全開啟並重新驗證，不能僅信任先前驗證結果。
+
+執行時應使用非 root 帳號，並確保來源檔案的所有父目錄由受信任的管理者控制：`O_NOFOLLOW` 只保護最終路徑元件，不保護可被替換的父目錄。Linux 也使用 `O_NONBLOCK` 避免來源被替換成 FIFO 時開啟阻塞。Validator 逐一檢查 tar 的實體 header、兩個結束零區塊與後續零填充，並限制最多 2,000 個實體 header 及每個 PAX metadata 16 KiB；PAX 僅允許打包所需的 `path` 和 `mtime`。60 MiB 解壓縮資料流限制並不等於程序記憶體上限；正式入口仍須另設執行時間與適當的程序資源限制。
