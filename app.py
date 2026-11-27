@@ -168,8 +168,12 @@ def socket_connect(auth):
             expiry = claims['exp']
         registry = app_instance.extensions['socket_auth_registry']
         with registry['lock']:
-            registry['sids'][sid] = {'user_id': user_id, 'exp': expiry, 'room_lock': threading.RLock()}
+            registry['sids'][sid] = {'user_id': user_id, 'exp': expiry, 'trips': set()}
+        socketio.start_background_task(expire_socket, app_instance, sid)
     except Exception:  # noqa: BLE001 -- authentication must fail closed
+        registry = app_instance.extensions['socket_auth_registry']
+        with registry['lock']:
+            registry['sids'].pop(sid, None)
         return False
 
 
@@ -178,6 +182,66 @@ def socket_disconnect(reason=None):
     registry = current_app.extensions['socket_auth_registry']
     with registry['lock']:
         registry['sids'].pop(request.sid, None)
+
+
+def expire_socket(app_instance, sid):
+    registry = app_instance.extensions['socket_auth_registry']
+    while True:
+        with registry['lock']:
+            state = registry['sids'].get(sid)
+            if state is None:
+                return
+            remaining = state['exp'] - time.time()
+            if remaining <= 0:
+                try:
+                    socketio.emit('token_expired', {}, to=sid)
+                except Exception:  # noqa: BLE001, S110 -- disconnect even if notification fails
+                    pass
+                try:
+                    socketio.server.disconnect(sid, namespace='/')
+                except Exception:  # noqa: BLE001, S110 -- fail closed even if transport cleanup fails
+                    pass
+                finally:
+                    registry['sids'].pop(sid, None)
+                return
+        socketio.sleep(min(remaining, 1))
+
+
+def cleanup_trip_members(trip_id, user_id=None):
+    """Remove affected subscriptions while the registry lock is held."""
+    registry = current_app.extensions['socket_auth_registry']
+    for sid, state in list(registry['sids'].items()):
+        if trip_id not in state['trips'] or (user_id is not None and str(state['user_id']) != str(user_id)):
+            continue
+        state['trips'].discard(trip_id)
+        try:
+            socketio.server.leave_room(sid, f'trip_{trip_id}', namespace='/')
+        except Exception:  # noqa: BLE001, S110 -- continue cleaning other connections
+            pass
+        if time.time() < state['exp']:
+            try:
+                socketio.emit('access_revoked', {'trip_id': trip_id}, to=sid)
+            except Exception:  # noqa: BLE001, S110 -- notification must not prevent cleanup
+                pass
+
+
+def emit_trip_update(event, payload, trip_id):
+    """Queue protected updates only after checking current access and expiry."""
+    trip_id = int(trip_id)
+    registry = current_app.extensions['socket_auth_registry']
+    with registry['lock']:
+        for sid, state in list(registry['sids'].items()):
+            if trip_id not in state['trips'] or time.time() >= state['exp']:
+                continue
+            try:
+                db.session.expire_all()
+                if not has_trip_access(trip_id, state['user_id']):
+                    continue
+            except Exception:  # noqa: BLE001 -- never send when access cannot be checked
+                db.session.rollback()
+                continue
+            if time.time() < state['exp']:
+                socketio.emit(event, payload, to=sid)
 
 
 def socket_trip_id(data):
@@ -197,21 +261,25 @@ def socket_trip_id(data):
 def on_join(data=None):
     """當前端進入某個行程分頁時觸發，加入專屬廣播房間"""
     registry = current_app.extensions['socket_auth_registry']
-    with registry['lock']:
-        state = registry['sids'].get(request.sid)
-    if state is None:
-        return {'ok': False, 'error': 'unauthenticated'}
     trip_id = socket_trip_id(data)
     if trip_id is None:
         return {'ok': False, 'error': 'invalid_trip_id'}
-    with state['room_lock']:
+    with registry['lock']:
+        state = registry['sids'].get(request.sid)
+        if state is None or time.time() >= state['exp']:
+            return {'ok': False, 'error': 'unauthenticated'}
         try:
+            db.session.expire_all()
             if not has_trip_access(trip_id, state['user_id']):
                 return {'ok': False, 'error': 'access_denied'}
+            if time.time() >= state['exp']:
+                return {'ok': False, 'error': 'unauthenticated'}
             room = f"trip_{trip_id}"
             if room not in rooms():
                 join_room(room)
+            state['trips'].add(trip_id)
         except Exception:  # noqa: BLE001 -- do not authorize when lookup fails
+            db.session.rollback()
             return {'ok': False, 'error': 'access_denied'}
     return {'ok': True, 'trip_id': trip_id}
 
@@ -219,15 +287,15 @@ def on_join(data=None):
 def on_leave(data=None):
     """當前端退回大廳時觸發，離開專屬廣播房間"""
     registry = current_app.extensions['socket_auth_registry']
-    with registry['lock']:
-        state = registry['sids'].get(request.sid)
-    if state is None:
-        return {'ok': False, 'error': 'unauthenticated'}
     trip_id = socket_trip_id(data)
     if trip_id is None:
         return {'ok': False, 'error': 'invalid_trip_id'}
-    with state['room_lock']:
+    with registry['lock']:
+        state = registry['sids'].get(request.sid)
+        if state is None:
+            return {'ok': False, 'error': 'unauthenticated'}
         leave_room(f"trip_{trip_id}")
+        state['trips'].discard(trip_id)
     return {'ok': True, 'trip_id': trip_id}
 
 # ================= API 路由 =================
@@ -446,6 +514,23 @@ def handle_trips():
 @jwt_required()
 def modify_trip(trip_id):
     current_user_id = get_jwt_identity()
+    if request.method == 'DELETE':
+        registry = current_app.extensions['socket_auth_registry']
+        with registry['lock']:
+            trip = Trip.query.get_or_404(trip_id)
+            is_owner = str(trip.user_id) == str(current_user_id)
+            share_record = None if is_owner else TripShare.query.filter_by(
+                trip_id=trip_id, user_id=current_user_id
+            ).first()
+            if is_owner:
+                db.session.delete(trip)
+            elif share_record:
+                db.session.delete(share_record)
+            else:
+                return jsonify({"error": "您無權刪除此行程"}), 403
+            db.session.commit()
+            cleanup_trip_members(trip_id, None if is_owner else current_user_id)
+            return jsonify({"status": "deleted"})
     trip = Trip.query.get_or_404(trip_id)
     is_owner = str(trip.user_id) == str(current_user_id)
     share_record = None
@@ -453,17 +538,6 @@ def modify_trip(trip_id):
         share_record = TripShare.query.filter_by(
             trip_id=trip_id, user_id=current_user_id
         ).first()
-
-    if request.method == 'DELETE':
-        if is_owner:
-            db.session.delete(trip)
-        elif share_record:
-            db.session.delete(share_record)
-        else:
-            return jsonify({"error": "您無權刪除此行程"}), 403
-
-        db.session.commit()
-        return jsonify({"status": "deleted"})
 
     if not is_owner and (not share_record or share_record.role != 'editor'):
         return jsonify({"error": "您無權修改此行程"}), 403
@@ -508,7 +582,7 @@ def handle_items():
         db.session.add(new_item)
         db.session.commit()
         # 💡 推播更新給同一行程的人
-        socketio.emit('itinerary_updated', {'action': 'add'}, room=f"trip_{trip_id}")
+        emit_trip_update('itinerary_updated', {'action': 'add'}, trip_id)
         return jsonify({"status": "success", "id": str(new_item.id)}), 201
 
     trip_id = request.args.get('trip_id')
@@ -529,7 +603,7 @@ def modify_item(item_id):
         db.session.delete(item)
         db.session.commit()
         # 💡 推播更新
-        socketio.emit('itinerary_updated', {'action': 'delete'}, room=f"trip_{trip_id}")
+        emit_trip_update('itinerary_updated', {'action': 'delete'}, trip_id)
         return jsonify({"status": "deleted"})
 
     data = request.get_json()
@@ -541,7 +615,7 @@ def modify_item(item_id):
     if 'day_number' in data: item.day_number = data['day_number']
     db.session.commit()
     # 💡 推播更新
-    socketio.emit('itinerary_updated', {'action': 'update'}, room=f"trip_{trip_id}")
+    emit_trip_update('itinerary_updated', {'action': 'update'}, trip_id)
     return jsonify({"status": "success"})
 
 @api.route('/api/items/reorder', methods=['PUT'])
@@ -564,7 +638,7 @@ def reorder_items():
     db.session.commit()
     if trip_id:
         # 💡 推播更新
-        socketio.emit('itinerary_updated', {'action': 'reorder'}, room=f"trip_{trip_id}")
+        emit_trip_update('itinerary_updated', {'action': 'reorder'}, trip_id)
     return jsonify({"status": "success"})
 
 @api.route('/api/expenses', methods=['GET', 'POST'])
@@ -601,7 +675,7 @@ def handle_expenses():
         db.session.commit()
 
         # 💡 推播更新
-        socketio.emit('expenses_updated', {'action': 'add'}, room=f"trip_{trip_id}")
+        emit_trip_update('expenses_updated', {'action': 'add'}, trip_id)
         return jsonify({"status": "success"}), 201
 
     trip_id = request.args.get('trip_id')
@@ -626,7 +700,7 @@ def handle_single_expense(exp_id):
     if request.method == 'DELETE':
         db.session.delete(exp)
         db.session.commit()
-        socketio.emit('expenses_updated', {'action': 'delete'}, room=f"trip_{trip_id}")
+        emit_trip_update('expenses_updated', {'action': 'delete'}, trip_id)
         return jsonify({"status": "deleted"})
 
     data = request.get_json()
@@ -648,7 +722,7 @@ def handle_single_expense(exp_id):
     if 'day_number' in data: exp.day_number = int(data['day_number'])
 
     db.session.commit()
-    socketio.emit('expenses_updated', {'action': 'update'}, room=f"trip_{trip_id}")
+    emit_trip_update('expenses_updated', {'action': 'update'}, trip_id)
     return jsonify({"status": "success"})
 
 @api.route('/api/shopping', methods=['GET', 'POST'])
@@ -672,7 +746,7 @@ def handle_shopping():
         db.session.add(new_shop)
         db.session.commit()
 
-        socketio.emit('shopping_updated', {'action': 'add'}, room=f"trip_{trip_id}")
+        emit_trip_update('shopping_updated', {'action': 'add'}, trip_id)
         return jsonify({"status": "success", "id": new_shop.id}), 201
 
     trip_id = request.args.get('trip_id')
@@ -699,7 +773,7 @@ def modify_shopping(item_id):
         if 'location' in data: item.location = data['location']
 
     db.session.commit()
-    socketio.emit('shopping_updated', {'action': 'update'}, room=f"trip_{trip_id}")
+    emit_trip_update('shopping_updated', {'action': 'update'}, trip_id)
     return jsonify({"status": "success"})
 
 

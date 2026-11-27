@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import Auth from './Auth'
 import SwipeableItem from './SwipeableItem'
@@ -47,6 +47,45 @@ function App() {
   const [socket, setSocket] = useState(null);
   const socketRef = useRef(null);
   const subscriptionRef = useRef(null);
+  const selectedTripRef = useRef(null);
+  const lifecycleRef = useRef({ session: 0, trip: 0, scan: 0 });
+  const capture = (tripScoped = false) => ({ ...lifecycleRef.current, tripScoped, token: localStorage.getItem('travel_token') });
+  const isCurrent = (snapshot) => snapshot.session === lifecycleRef.current.session &&
+    snapshot.token === localStorage.getItem('travel_token') &&
+    (!snapshot.tripScoped || snapshot.trip === lifecycleRef.current.trip);
+  const guard = (snapshot, callback) => (...args) => {
+    if (isCurrent(snapshot)) return callback(...args);
+  };
+  const invalidateTrip = useCallback(() => {
+    lifecycleRef.current.trip++;
+    lifecycleRef.current.scan++;
+    subscriptionRef.current = null;
+    selectedTripRef.current = null;
+    setIsScanning(false);
+    setReceiptModalData(null);
+    setShareLink('');
+    setShareModalOpen(false);
+    setNewItemForm({ content: '', start_time: '', map_url: '', memo: '', category: '景點' });
+    setEditingItemId(null);
+    setEditItemForm({});
+    setNewShopForm({ name: '', location: '', item_image: null });
+    setEditingShopId(null);
+    setEditShopForm({});
+    setNewExpense({ amount: '', category: '飲食', description: '', day_number: 1, receipt_image: null });
+    setEditingExpenseId(null);
+    setEditExpenseForm({});
+  }, []);
+  const invalidateSession = useCallback(() => {
+    lifecycleRef.current.session++;
+    invalidateTrip();
+    setTrips([]);
+    setItems([]);
+    setExpenses([]);
+    setShoppingItems([]);
+    setNewTripForm({ title: '', start_date: '', end_date: '', budget: '' });
+    setEditingLobbyTripId(null);
+    setLobbyEditForm({});
+  }, [invalidateTrip]);
   const [syncStatus, setSyncStatus] = useState('尚未連線');
 
   useEffect(() => localStorage.setItem('travelBaseCurrency', baseCurrency), [baseCurrency]);
@@ -64,6 +103,7 @@ function App() {
       reconnectionAttempts: 5
     });
     const onError = (error) => {
+      if (socketRef.current !== newSocket || localStorage.getItem('travel_token') !== token) return;
       if (error.message === 'Connection rejected by server') {
         newSocket.disconnect();
         setSyncStatus('即時同步身分驗證失敗，請重新登入');
@@ -71,8 +111,23 @@ function App() {
         setSyncStatus('即時同步連線失敗，正在重試');
       }
     };
-    const onReconnectFailed = () => setSyncStatus('即時同步無法連線，請重新整理頁面');
+    const onReconnectFailed = () => { if (socketRef.current === newSocket && localStorage.getItem('travel_token') === token) setSyncStatus('即時同步無法連線，請重新整理頁面'); };
+    const onExpired = () => {
+      if (socketRef.current !== newSocket || localStorage.getItem('travel_token') !== token) return;
+      invalidateSession();
+      subscriptionRef.current = null;
+      selectedTripRef.current = null;
+      socketRef.current = null;
+      newSocket.disconnect();
+      localStorage.removeItem('travel_token');
+      setToken(null);
+      setIsLoggedIn(false);
+      setCurrentTrip(null);
+      setSocket(null);
+      setSyncStatus('登入已過期，請重新登入');
+    };
     newSocket.on('connect_error', onError);
+    newSocket.on('token_expired', onExpired);
     newSocket.io.on('reconnect_failed', onReconnectFailed);
     socketRef.current = newSocket;
     setSocket(newSocket);
@@ -80,17 +135,20 @@ function App() {
     // 當元件卸載時關閉連線，避免記憶體洩漏
     return () => {
       newSocket.off('connect_error', onError);
+      newSocket.off('token_expired', onExpired);
       newSocket.io.off('reconnect_failed', onReconnectFailed);
       newSocket.disconnect();
       if (socketRef.current === newSocket) socketRef.current = null;
     };
-  }, [BASE_URL, isLoggedIn, token]);
+  }, [BASE_URL, isLoggedIn, token, invalidateSession]);
 
   useEffect(() => {
     const onStorage = (event) => {
       if (event.key === 'travel_token') {
+        invalidateSession();
         socketRef.current?.disconnect();
         socketRef.current = null;
+        selectedTripRef.current = null;
         setToken(event.newValue);
         setIsLoggedIn(Boolean(event.newValue));
         setCurrentTrip(null);
@@ -98,7 +156,7 @@ function App() {
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, []);
+  }, [invalidateSession]);
 
   // 💡 新增 2：管理房間加入/離開與監聽推播事件
   useEffect(() => {
@@ -108,11 +166,11 @@ function App() {
       const subscription = { socket, tripId: currentTrip.id };
       subscriptionRef.current = subscription;
       const refresh = (endpoint, setData) => {
-        if (!active || socketRef.current !== socket || localStorage.getItem('travel_token') !== token) return;
+        if (!active || subscriptionRef.current !== subscription || socketRef.current !== socket || localStorage.getItem('travel_token') !== token) return;
         fetch(`${API_BASE}/${endpoint}?trip_id=${currentTrip.id}`, {
           headers: { Authorization: `Bearer ${token}` }
         }).then(res => res.json()).then(data => {
-          if (active && socketRef.current === socket && localStorage.getItem('travel_token') === token) {
+          if (active && subscriptionRef.current === subscription && socketRef.current === socket && localStorage.getItem('travel_token') === token) {
             setData(Array.isArray(data) ? data : []);
           }
         });
@@ -123,7 +181,7 @@ function App() {
         const currentAttempt = ++attempt;
         setSyncStatus('正在訂閱即時更新');
         socket.timeout(5000).emit('join_trip', { trip_id: currentTrip.id }, (error, result) => {
-          if (!active || currentAttempt !== attempt || socketRef.current !== socket) {
+          if (!active || subscriptionRef.current !== subscription || currentAttempt !== attempt || socketRef.current !== socket) {
             const current = subscriptionRef.current;
             if (!error && result?.ok && socket.connected && !(current?.socket === socket && current.tripId === currentTrip.id)) {
               socket.emit('leave_trip', { trip_id: currentTrip.id });
@@ -149,9 +207,25 @@ function App() {
       const onItinerary = () => refresh('items', setItems);
       const onShopping = () => refresh('shopping', setShoppingItems);
       const onExpenses = () => refresh('expenses', setExpenses);
+      const onRevoked = (data) => {
+        if (!active || subscriptionRef.current !== subscription || data?.trip_id !== currentTrip.id || socketRef.current !== socket) return;
+        invalidateTrip();
+        subscriptionRef.current = null;
+        selectedTripRef.current = null;
+        setCurrentTrip(null);
+        setItems([]);
+        setShoppingItems([]);
+        setExpenses([]);
+        setSyncStatus('行程權限已失效');
+        fetch(`${API_BASE}/trips`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(res => res.json()).then(data => {
+            if (socketRef.current === socket && localStorage.getItem('travel_token') === token) setTrips(Array.isArray(data) ? data : []);
+          });
+      };
       socket.on('itinerary_updated', onItinerary);
       socket.on('shopping_updated', onShopping);
       socket.on('expenses_updated', onExpenses);
+      socket.on('access_revoked', onRevoked);
 
       // 清理函數：當退回大廳或切換行程時，離開舊房間並取消監聽
       return () => {
@@ -163,9 +237,10 @@ function App() {
         socket.off('itinerary_updated', onItinerary);
         socket.off('shopping_updated', onShopping);
         socket.off('expenses_updated', onExpenses);
+        socket.off('access_revoked', onRevoked);
       };
     }
-  }, [socket, currentTrip, token, API_BASE]);
+  }, [socket, currentTrip, token, API_BASE, invalidateTrip]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -191,8 +266,10 @@ function App() {
   };
 
   const handleLogout = () => {
+    invalidateSession();
     socketRef.current?.disconnect();
     socketRef.current = null;
+    selectedTripRef.current = null;
     setSocket(null);
     localStorage.removeItem('travel_token');
     setToken(null);
@@ -204,6 +281,7 @@ function App() {
     if (isLoggedIn) {
       const pendingToken = sessionStorage.getItem('pending_share_token');
       if (pendingToken) {
+        const snapshot = capture();
         fetch(`${API_BASE}/trips/accept-share`, {
           method: 'POST',
           headers: getAuthHeaders(),
@@ -211,6 +289,7 @@ function App() {
         })
           .then(res => res.json())
           .then(data => {
+            if (snapshot.session !== lifecycleRef.current.session || snapshot.token !== localStorage.getItem('travel_token')) return;
             if (data.error) alert(data.error);
             else alert(`${data.message} 您的權限為：${data.role === 'editor' ? '可編輯' : '僅檢視'}`);
 
@@ -223,15 +302,17 @@ function App() {
     }
   }, [isLoggedIn])
 
-  const fetchTrips = () => fetch(`${API_BASE}/trips`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setTrips(Array.isArray(data) ? data : []))
-  const selectTrip = (trip) => { setSyncStatus('等待即時同步連線'); setCurrentTrip(trip); setSelectedDay(1); setExpenseFilterDay(0); fetchItems(trip.id); fetchExpenses(trip.id); fetchShopping(trip.id); }
-  const fetchItems = (tripId) => fetch(`${API_BASE}/items?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setItems(Array.isArray(data) ? data : []))
-  const fetchExpenses = (tripId) => fetch(`${API_BASE}/expenses?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setExpenses(Array.isArray(data) ? data : []))
-  const fetchShopping = (tripId) => fetch(`${API_BASE}/shopping?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setShoppingItems(Array.isArray(data) ? data : []))
+  const fetchTrips = () => { const snapshot = capture(); return fetch(`${API_BASE}/trips`, { headers: getAuthHeaders() }).then(res => res.json()).then(guard(snapshot, data => setTrips(Array.isArray(data) ? data : []))); }
+  const selectTrip = (trip) => { invalidateTrip(); selectedTripRef.current = trip.id; setSyncStatus('等待即時同步連線'); setCurrentTrip(trip); setSelectedDay(1); setExpenseFilterDay(0); fetchItems(trip.id); fetchExpenses(trip.id); fetchShopping(trip.id); }
+  const fetchTripData = (endpoint, tripId, setter) => { const snapshot = capture(true); return fetch(`${API_BASE}/${endpoint}?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(guard(snapshot, data => { if (selectedTripRef.current === tripId) setter(Array.isArray(data) ? data : []); })); }
+  const fetchItems = (tripId) => fetchTripData('items', tripId, setItems)
+  const fetchExpenses = (tripId) => fetchTripData('expenses', tripId, setExpenses)
+  const fetchShopping = (tripId) => fetchTripData('shopping', tripId, setShoppingItems)
 
   const canEdit = currentTrip && (currentTrip.role === 'owner' || currentTrip.role === 'editor');
 
   const handleGenerateShareLink = () => {
+    const snapshot = capture(true);
     fetch(`${API_BASE}/trips/generate-share`, {
       method: 'POST',
       headers: getAuthHeaders(),
@@ -243,57 +324,59 @@ function App() {
         }
         return res.json();
       })
-      .then(data => {
+      .then(guard(snapshot, data => {
         if (data.error) return alert(data.error);
         const fullUrl = `${window.location.origin}/?share_token=${data.share_token}`;
         setShareLink(fullUrl);
         setIsCopied(false);
-      })
-      .catch(err => {
+      }))
+      .catch(guard(snapshot, err => {
         console.error(err);
         alert(`哎呀！無法產生連結。\n\n詳細原因：${err.message}\n\n👉 請檢查跑 Flask 的那個終端機視窗，看看有沒有錯誤訊息！`);
-      });
+      }));
   };
 
   const handleCopyLink = () => {
+    const snapshot = capture(true);
     navigator.clipboard.writeText(shareLink);
     setIsCopied(true);
-    setTimeout(() => setIsCopied(false), 2000);
+    setTimeout(guard(snapshot, () => setIsCopied(false)), 2000);
   };
 
   const getTripDays = (start, end) => { const d1 = new Date(start); const d2 = new Date(end); return (Math.ceil(Math.abs(d2 - d1) / (1000 * 60 * 60 * 24)) + 1) || 1 }
   const totalDays = currentTrip ? getTripDays(currentTrip.start_date, currentTrip.end_date) : 1
   const getDisplayDate = (startDate, dayNumber) => { if (!startDate || dayNumber === 0) return ''; const date = new Date(startDate + 'T00:00:00'); date.setDate(date.getDate() + dayNumber - 1); return `${date.getMonth() + 1}/${date.getDate()}`; }
 
-  const handleCreateTrip = (e) => { e.preventDefault(); fetch(`${API_BASE}/trips`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(newTripForm) }).then(() => { fetchTrips(); setNewTripForm({ title: '', start_date: '', end_date: '', budget: '' }) }) }
+  const handleCreateTrip = (e) => { e.preventDefault(); const snapshot = capture(); fetch(`${API_BASE}/trips`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(newTripForm) }).then(guard(snapshot, () => { fetchTrips(); setNewTripForm({ title: '', start_date: '', end_date: '', budget: '' }) })) }
   const startEditingLobbyTrip = (trip, e) => { e.stopPropagation(); setEditingLobbyTripId(trip.id); setLobbyEditForm(trip) }
-  const handleUpdateLobbyTrip = (e) => { e.preventDefault(); fetch(`${API_BASE}/trips/${editingLobbyTripId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(lobbyEditForm) }).then(() => { fetchTrips(); setEditingLobbyTripId(null); }) }
+  const handleUpdateLobbyTrip = (e) => { e.preventDefault(); const snapshot = capture(); fetch(`${API_BASE}/trips/${editingLobbyTripId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(lobbyEditForm) }).then(guard(snapshot, () => { fetchTrips(); setEditingLobbyTripId(null); })) }
 
   const handleDeleteTrip = (trip, e) => {
     e.stopPropagation();
     const isOwner = trip.role === 'owner';
     const confirmMsg = isOwner ? "確定要徹底刪除整個行程嗎？" : "確定要退出這個共用行程嗎？";
     if (window.confirm(confirmMsg)) {
-      fetch(`${API_BASE}/trips/${trip.id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchTrips())
+      const snapshot = capture();
+      fetch(`${API_BASE}/trips/${trip.id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(guard(snapshot, () => fetchTrips()))
     }
   }
 
-  const handleAddItem = (e) => { e.preventDefault(); if (!newItemForm.content) return; const orderIndex = items.filter(i => i.day_number === selectedDay).length; fetch(`${API_BASE}/items`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ trip_id: currentTrip.id, day_number: selectedDay, order_index: orderIndex, ...newItemForm }) }).then(() => { fetchItems(currentTrip.id); setNewItemForm({ content: '', start_time: '', map_url: '', memo: '', category: '景點' }); }) }
-  const saveEditedItem = () => fetch(`${API_BASE}/items/${editingItemId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editItemForm) }).then(() => { fetchItems(currentTrip.id); setEditingItemId(null) })
-  const deleteItem = (id) => { if (window.confirm("確定要刪除這個景點嗎？")) { fetch(`${API_BASE}/items/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchItems(currentTrip.id)) } }
+  const handleAddItem = (e) => { e.preventDefault(); if (!newItemForm.content) return; const snapshot = capture(true); const orderIndex = items.filter(i => i.day_number === selectedDay).length; fetch(`${API_BASE}/items`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ trip_id: currentTrip.id, day_number: selectedDay, order_index: orderIndex, ...newItemForm }) }).then(guard(snapshot, () => { fetchItems(currentTrip.id); setNewItemForm({ content: '', start_time: '', map_url: '', memo: '', category: '景點' }); })) }
+  const saveEditedItem = () => { const snapshot = capture(true); return fetch(`${API_BASE}/items/${editingItemId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editItemForm) }).then(guard(snapshot, () => { fetchItems(currentTrip.id); setEditingItemId(null) })) }
+  const deleteItem = (id) => { if (window.confirm("確定要刪除這個景點嗎？")) { const snapshot = capture(true); fetch(`${API_BASE}/items/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(guard(snapshot, () => fetchItems(currentTrip.id))) } }
 
   const compressImage = (file) => { return new Promise((resolve) => { const reader = new FileReader(); reader.readAsDataURL(file); reader.onload = (event) => { const img = new Image(); img.src = event.target.result; img.onload = () => { const MAX_WIDTH = 800; const ratio = MAX_WIDTH / img.width; const canvas = document.createElement('canvas'); canvas.width = MAX_WIDTH; canvas.height = img.height * ratio; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, canvas.width, canvas.height); canvas.toBlob((blob) => { resolve(new File([blob], file.name, { type: 'image/jpeg' })); }, 'image/jpeg', 0.7); }; }; }); };
 
-  const handleAddShop = async (e) => { e.preventDefault(); if (!newShopForm.name) return; const formData = new FormData(); formData.append('trip_id', currentTrip.id); formData.append('name', newShopForm.name); formData.append('location', newShopForm.location); if (newShopForm.item_image) { const compressed = await compressImage(newShopForm.item_image); formData.append('item_image', compressed); } fetch(`${API_BASE}/shopping`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(() => { fetchShopping(currentTrip.id); setNewShopForm({ name: '', location: '', item_image: null }); document.getElementById('shop-upload').value = ''; }) }
-  const toggleBoughtStatus = (item) => { if (!canEdit) return; fetch(`${API_BASE}/shopping/${item.id}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ is_bought: !item.is_bought }) }).then(() => fetchShopping(currentTrip.id)) }
-  const saveEditedShop = () => fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editShopForm) }).then(() => { fetchShopping(currentTrip.id); setEditingShopId(null) })
-  const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchShopping(currentTrip.id)) } }
+  const handleAddShop = async (e) => { e.preventDefault(); if (!newShopForm.name) return; const snapshot = capture(true); const formData = new FormData(); formData.append('trip_id', currentTrip.id); formData.append('name', newShopForm.name); formData.append('location', newShopForm.location); if (newShopForm.item_image) { const compressed = await compressImage(newShopForm.item_image); if (!isCurrent(snapshot)) return; formData.append('item_image', compressed); } fetch(`${API_BASE}/shopping`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(guard(snapshot, () => { fetchShopping(currentTrip.id); setNewShopForm({ name: '', location: '', item_image: null }); const input = document.getElementById('shop-upload'); if (input) input.value = ''; })) }
+  const toggleBoughtStatus = (item) => { if (!canEdit) return; const snapshot = capture(true); fetch(`${API_BASE}/shopping/${item.id}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ is_bought: !item.is_bought }) }).then(guard(snapshot, () => fetchShopping(currentTrip.id))) }
+  const saveEditedShop = () => { const snapshot = capture(true); return fetch(`${API_BASE}/shopping/${editingShopId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editShopForm) }).then(guard(snapshot, () => { fetchShopping(currentTrip.id); setEditingShopId(null) })) }
+  const deleteShopItem = (id) => { if (window.confirm("確定刪除這項物品嗎？")) { const snapshot = capture(true); fetch(`${API_BASE}/shopping/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(guard(snapshot, () => fetchShopping(currentTrip.id))) } }
 
-  const handleAIScan = async (e) => { const file = e.target.files[0]; if (!file) return; setIsScanning(true); try { const compressed = await compressImage(file); const formData = new FormData(); formData.append('receipt_image', compressed); const res = await fetch(`${API_BASE}/scan-receipt`, { method: 'POST', headers: getAuthHeaders(true), body: formData }); if (!res.ok) throw new Error("伺服器辨識失敗"); const aiData = await res.json(); let autoDayNumber = expenseFilterDay === 0 ? 1 : expenseFilterDay; if (aiData.date && currentTrip.start_date) { const tripStart = new Date(currentTrip.start_date + 'T00:00:00'); const receiptDate = new Date(aiData.date + 'T00:00:00'); if (!isNaN(receiptDate.getTime())) { const diffTime = receiptDate - tripStart; const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1; if (diffDays >= 1 && diffDays <= totalDays) { autoDayNumber = diffDays; } } } setReceiptModalData({ ...aiData, receipt_image: file, autoDayNumber }); setIsReceiptModalForPreview(true); } catch (err) { console.error(err); alert("Oops! AI 看不懂這張發票，請確認網路或換一張角度重拍。"); } finally { setIsScanning(false); e.target.value = ''; } }
-  const handleConfirmAIExpense = () => { const formData = new FormData(); formData.append('trip_id', currentTrip.id); formData.append('amount', receiptModalData.amount); formData.append('currency', baseCurrency); formData.append('category', receiptModalData.category); formData.append('description', JSON.stringify(receiptModalData.receipt_details)); formData.append('day_number', receiptModalData.autoDayNumber); if (receiptModalData.receipt_image) formData.append('receipt_image', receiptModalData.receipt_image); fetch(`${API_BASE}/expenses`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(() => { fetchExpenses(currentTrip.id); setReceiptModalData(null); }); }
-  const handleAddExpense = async (e) => { e.preventDefault(); if (!newExpense.amount) return; const formData = new FormData(); formData.append('trip_id', currentTrip.id); formData.append('amount', newExpense.amount); formData.append('currency', baseCurrency); formData.append('category', newExpense.category); formData.append('description', newExpense.description); formData.append('day_number', newExpense.day_number); if (newExpense.receipt_image) { const compressed = await compressImage(newExpense.receipt_image); formData.append('receipt_image', compressed); } fetch(`${API_BASE}/expenses`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(() => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', day_number: expenseFilterDay === 0 ? 1 : expenseFilterDay, receipt_image: null }); document.getElementById('receipt-upload').value = ''; }) }
-  const saveEditedExpense = () => { fetch(`${API_BASE}/expenses/${editingExpenseId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editExpenseForm) }).then(() => { fetchExpenses(currentTrip.id); setEditingExpenseId(null); }); }
-  const deleteExpense = (id) => { if (window.confirm("確定刪除這筆花費？")) { fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(() => fetchExpenses(currentTrip.id)) } }
+  const handleAIScan = async (e) => { const input = e.target; const file = input.files[0]; if (!file) return; const snapshot = capture(true); const scan = ++lifecycleRef.current.scan; const valid = () => isCurrent(snapshot) && lifecycleRef.current.scan === scan; setIsScanning(true); try { const compressed = await compressImage(file); if (!valid()) return; const formData = new FormData(); formData.append('receipt_image', compressed); const res = await fetch(`${API_BASE}/scan-receipt`, { method: 'POST', headers: getAuthHeaders(true), body: formData }); if (!res.ok) throw new Error("伺服器辨識失敗"); const aiData = await res.json(); if (!valid()) return; let autoDayNumber = expenseFilterDay === 0 ? 1 : expenseFilterDay; if (aiData.date && currentTrip.start_date) { const tripStart = new Date(currentTrip.start_date + 'T00:00:00'); const receiptDate = new Date(aiData.date + 'T00:00:00'); if (!isNaN(receiptDate.getTime())) { const diffTime = receiptDate - tripStart; const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1; if (diffDays >= 1 && diffDays <= totalDays) { autoDayNumber = diffDays; } } } setReceiptModalData({ ...aiData, receipt_image: file, autoDayNumber }); setIsReceiptModalForPreview(true); } catch (err) { if (valid()) { console.error(err); alert("Oops! AI 看不懂這張發票，請確認網路或換一張角度重拍。"); } } finally { if (valid()) { setIsScanning(false); input.value = ''; } } }
+  const handleConfirmAIExpense = () => { const snapshot = capture(true); const formData = new FormData(); formData.append('trip_id', currentTrip.id); formData.append('amount', receiptModalData.amount); formData.append('currency', baseCurrency); formData.append('category', receiptModalData.category); formData.append('description', JSON.stringify(receiptModalData.receipt_details)); formData.append('day_number', receiptModalData.autoDayNumber); if (receiptModalData.receipt_image) formData.append('receipt_image', receiptModalData.receipt_image); fetch(`${API_BASE}/expenses`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(guard(snapshot, () => { fetchExpenses(currentTrip.id); setReceiptModalData(null); })); }
+  const handleAddExpense = async (e) => { e.preventDefault(); if (!newExpense.amount) return; const snapshot = capture(true); const formData = new FormData(); formData.append('trip_id', currentTrip.id); formData.append('amount', newExpense.amount); formData.append('currency', baseCurrency); formData.append('category', newExpense.category); formData.append('description', newExpense.description); formData.append('day_number', newExpense.day_number); if (newExpense.receipt_image) { const compressed = await compressImage(newExpense.receipt_image); if (!isCurrent(snapshot)) return; formData.append('receipt_image', compressed); } fetch(`${API_BASE}/expenses`, { method: 'POST', headers: getAuthHeaders(true), body: formData }).then(guard(snapshot, () => { fetchExpenses(currentTrip.id); setNewExpense({ amount: '', category: '飲食', description: '', day_number: expenseFilterDay === 0 ? 1 : expenseFilterDay, receipt_image: null }); const input = document.getElementById('receipt-upload'); if (input) input.value = ''; })) }
+  const saveEditedExpense = () => { const snapshot = capture(true); fetch(`${API_BASE}/expenses/${editingExpenseId}`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify(editExpenseForm) }).then(guard(snapshot, () => { fetchExpenses(currentTrip.id); setEditingExpenseId(null); })); }
+  const deleteExpense = (id) => { if (window.confirm("確定刪除這筆花費？")) { const snapshot = capture(true); fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE', headers: getAuthHeaders() }).then(guard(snapshot, () => fetchExpenses(currentTrip.id))) } }
 
   const onDragEnd = (result) => { if (!canEdit) return; const { source, destination } = result; if (!destination) return; const sDay = parseInt(source.droppableId.split('-')[1]); const dDay = parseInt(destination.droppableId.split('-')[1]); let newItems = Array.from(items); const sItems = newItems.filter(i => i.day_number === sDay).sort((a, b) => a.order_index - b.order_index); const [moved] = sItems.splice(source.index, 1); moved.day_number = dDay; const dItems = sDay === dDay ? sItems : newItems.filter(i => i.day_number === dDay).sort((a, b) => a.order_index - b.order_index); dItems.splice(destination.index, 0, moved); const payload = [...sItems.map((it, idx) => ({ id: it.id, order_index: idx, day_number: sDay })), ...dItems.map((it, idx) => ({ id: it.id, order_index: idx, day_number: dDay }))]; setItems(items.map(it => { const up = payload.find(p => p.id === it.id); return up ? { ...it, ...up } : it; })); fetch(`${API_BASE}/items/reorder`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ reordered_items: payload }) }); }
 
@@ -449,7 +532,7 @@ function App() {
   }
 
   if (!isLoggedIn) {
-    return <Auth onLoginSuccess={() => { setToken(localStorage.getItem('travel_token')); setIsLoggedIn(true); }} />;
+    return <Auth onLoginSuccess={() => { invalidateSession(); setToken(localStorage.getItem('travel_token')); setIsLoggedIn(true); }} />;
   }
 
   if (!currentTrip) {
@@ -645,7 +728,7 @@ function App() {
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' }}>
             <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }}>
-              <button onClick={() => setCurrentTrip(null)} style={{ padding: '8px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', fontWeight: 600, cursor: 'pointer', outline: 'none', color: '#4a5568', fontSize: '15px', transition: 'all 0.2s' }}>大廳</button>
+              <button onClick={() => { invalidateTrip(); setCurrentTrip(null); }} style={{ padding: '8px 16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc', fontWeight: 600, cursor: 'pointer', outline: 'none', color: '#4a5568', fontSize: '15px', transition: 'all 0.2s' }}>大廳</button>
             </div>
             <div style={{ flex: 2, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
               <h1 style={{ margin: 0, color: '#1a365d', fontSize: '1.4em', fontWeight: 700, textAlign: 'center' }}>{currentTrip.title}</h1>

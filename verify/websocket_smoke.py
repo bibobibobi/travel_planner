@@ -24,6 +24,8 @@ def main():
     )
     client = socketio.Client(reconnection=False)
     outsider = socketio.Client(reconnection=False)
+    outsider_second = socketio.Client(reconnection=False)
+    short = socketio.Client(reconnection=False)
     received = threading.Event()
     leaked = threading.Event()
     client.on("itinerary_updated", lambda _data: received.set())
@@ -76,8 +78,52 @@ def main():
             raise AssertionError("WebSocket client did not receive itinerary event")
         if leaked.wait(0.5):
             raise AssertionError("Unauthorized client received itinerary event")
+        response = requests.post(base + "/api/trips/generate-share", headers=headers,
+                                 json={"trip_id": trip_id, "role": "viewer"}, timeout=5)
+        response.raise_for_status()
+        response = requests.post(base + "/api/trips/accept-share",
+                                 headers={"Authorization": "Bearer " + other_token},
+                                 json={"share_token": response.json()["share_token"]}, timeout=5)
+        response.raise_for_status()
+        outsider_second.connect(base, auth={"token": other_token}, transports=["websocket"], wait_timeout=5)
+        for connection in (outsider, outsider_second):
+            assert connection.call("join_trip", {"trip_id": trip_id}, timeout=5)["ok"]
+        removed = threading.Event()
+        outsider_second.on("itinerary_updated", lambda _data: removed.set())
+        response = requests.delete(base + f"/api/trips/{trip_id}",
+                                   headers={"Authorization": "Bearer " + other_token}, timeout=5)
+        response.raise_for_status()
+        received.clear()
+        response = requests.post(base + "/api/items", headers=headers,
+                                 json={"trip_id": trip_id, "content": "after exit"}, timeout=5)
+        response.raise_for_status()
+        assert received.wait(5)
+        assert not leaked.wait(0.5) and not removed.wait(0.5)
+
+        script = ("from datetime import timedelta; from app import app, User; "
+                  "from flask_jwt_extended import create_access_token; "
+                  "ctx=app.app_context(); ctx.push(); "
+                  "u=User.query.filter_by(email='verify@example.invalid').first(); "
+                  "print(create_access_token(identity=str(u.id), expires_delta=timedelta(seconds=3)))")
+        short_token = subprocess.check_output([sys.executable, "-c", script], text=True).strip()
+        short.connect(base, auth={"token": short_token}, transports=["websocket"], wait_timeout=5)
+        assert short.call("join_trip", {"trip_id": trip_id}, timeout=5)["ok"]
+        short_received = threading.Event()
+        short.on("itinerary_updated", lambda _data: short_received.set())
+        deadline = time.monotonic() + 6
+        while short.connected and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not short.connected
+        received.clear()
+        response = requests.post(base + "/api/items", headers=headers,
+                                 json={"trip_id": trip_id, "content": "after expiry"}, timeout=5)
+        response.raise_for_status()
+        assert received.wait(5) and not short_received.wait(0.5)
         print("PASS: real websocket transport and room event")
     finally:
+        for connection in (short, outsider_second):
+            if connection.connected:
+                connection.disconnect()
         if outsider.connected:
             outsider.disconnect()
         if client.connected:

@@ -101,10 +101,12 @@ def test_leave_after_access_loss_and_independent_sid(app, client, room_setup):
         for sock in (sockets['viewer'], second):
             assert call(sock, 'join_trip', {'trip_id': trip})['ok']
         assert client.delete(f'/api/trips/{trip}', headers=headers['viewer']).status_code == 200
+        for sock in (sockets['viewer'], second):
+            assert [event['name'] for event in sock.get_received()] == ['access_revoked']
         assert call(sockets['viewer'], 'leave_trip', {'trip_id': trip})['ok']
         assert client.post('/api/items', headers=headers['owner'], json={'trip_id': trip, 'content': 'test'}).status_code == 201
         assert sockets['viewer'].get_received() == []
-        assert len(second.get_received()) == 1  # V4 will remove existing memberships on access loss.
+        assert second.get_received() == []
         second.disconnect()
         second = socketio.test_client(app, auth={'token': room_setup['tokens']['viewer']})
         assert call(second, 'join_trip', {'trip_id': trip}) == {'ok': False, 'error': 'access_denied'}
