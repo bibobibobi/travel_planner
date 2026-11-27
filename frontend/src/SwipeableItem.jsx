@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 export default function SwipeableItem({ children, onEdit, onDelete, canEdit, isOpen, onOpen, onClose, showEdit = true, deleteIcon = '🗑️' }) {
     const [translateX, setTranslateX] = useState(0);

@@ -151,7 +151,6 @@ function App() {
     })
       .then(async (res) => {
         if (!res.ok) {
-          const errorText = await res.text();
           throw new Error(`伺服器錯誤狀態碼：${res.status}`);
         }
         return res.json();
@@ -252,11 +251,12 @@ function App() {
           </div>
         );
       }
-    } catch (e) { }
+    } catch {
+      // JSON 解析失敗時保留原始文字描述。
+    }
     return <span style={{ color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-all' }}>{desc}</span>;
   };
 
-  const isSmartExp = (desc) => { try { return !!JSON.parse(desc)?.store_name; } catch (e) { return false; } };
   const displayImageUrl = receiptModalData?.receipt_image ? URL.createObjectURL(receiptModalData.receipt_image) : receiptModalData?.image_url;
 
   const renderDayColumn = (day, title = null) => {
@@ -278,7 +278,7 @@ function App() {
                 const cat = ITEM_CATEGORIES.find(c => c.name === (item.category || '景點')) || ITEM_CATEGORIES[0];
                 return (
                   <Draggable key={item.id} draggableId={item.id} index={index} isDragDisabled={!canEdit}>
-                    {(p, s) => (
+                    {(p) => (
                       <div
                         ref={p.innerRef}
                         {...p.draggableProps}
@@ -758,7 +758,7 @@ function App() {
 
             <ul style={{ listStyle: 'none', padding: 0 }}>
               {filteredExpenses.map(exp => {
-                const isSmartExp = (() => { try { return !!JSON.parse(exp.description)?.store_name; } catch (e) { return false; } })();
+                const isSmartExp = (() => { try { return !!JSON.parse(exp.description)?.store_name; } catch { return false; } })();
                 return (
                   <li key={exp.id} style={{ marginBottom: '10px' }}>
                     {editingExpenseId === exp.id ? (
