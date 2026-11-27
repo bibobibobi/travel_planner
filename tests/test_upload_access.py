@@ -107,6 +107,8 @@ def test_uploaded_images_require_current_trip_access(client, monkeypatch):
             response = client.get(image_url, headers=headers)
             assert response.status_code == 200
             assert response.data == expected_data
+            assert response.cache_control.private is True
+            assert response.cache_control.no_store is True
 
     revocation_response = client.delete(f"/api/trips/{trip_id}", headers=viewer_headers)
     assert revocation_response.status_code == 200

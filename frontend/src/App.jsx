@@ -7,16 +7,16 @@ import { io } from 'socket.io-client'
 import './App.css'
 
 function AuthenticatedImage({ imageUrl, token, baseUrl, alt, style }) {
-  const [blobUrl, setBlobUrl] = useState(null);
+  const [blob, setBlob] = useState(null);
+  const requestKey = `${baseUrl}|${imageUrl}|${token}`;
 
   useEffect(() => {
-    if (!imageUrl || !token) return undefined;
+    if (!imageUrl || !token || !imageUrl.startsWith('/api/uploads/')) return undefined;
 
     const controller = new AbortController();
     let objectUrl;
-    const requestUrl = imageUrl.startsWith('http://') || imageUrl.startsWith('https://')
-      ? imageUrl
-      : `${baseUrl}${imageUrl}`;
+    let active = true;
+    const requestUrl = `${baseUrl}${imageUrl}`;
 
     fetch(requestUrl, {
       headers: { Authorization: `Bearer ${token}` },
@@ -24,20 +24,42 @@ function AuthenticatedImage({ imageUrl, token, baseUrl, alt, style }) {
     })
       .then((response) => (response.ok ? response.blob() : Promise.reject(new Error('Image request failed'))))
       .then((blob) => {
+        if (!active) return;
         objectUrl = URL.createObjectURL(blob);
-        setBlobUrl(objectUrl);
+        setBlob({ requestKey, url: objectUrl });
       })
       .catch((error) => {
-        if (error.name !== 'AbortError') setBlobUrl(null);
+        if (active && error.name !== 'AbortError') setBlob(null);
       });
 
     return () => {
+      active = false;
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [baseUrl, imageUrl, token]);
+  }, [baseUrl, imageUrl, requestKey, token]);
 
-  return blobUrl ? <img src={blobUrl} alt={alt} style={style} /> : null;
+  return blob?.requestKey === requestKey ? <img src={blob.url} alt={alt} style={style} /> : null;
+}
+
+function LocalImagePreview({ file, alt, style }) {
+  const [blob, setBlob] = useState(null);
+
+  useEffect(() => {
+    if (!file) return undefined;
+
+    const objectUrl = URL.createObjectURL(file);
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setBlob({ file, url: objectUrl });
+    });
+    return () => {
+      active = false;
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
+
+  return blob?.file === file ? <img src={blob.url} alt={alt} style={style} /> : null;
 }
 
 function App() {
@@ -462,8 +484,6 @@ function App() {
     return <span style={{ color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-all' }}>{desc}</span>;
   };
 
-  const previewImageUrl = receiptModalData?.receipt_image ? URL.createObjectURL(receiptModalData.receipt_image) : null;
-
   const renderDayColumn = (day, title = null) => {
     const dayItems = items.filter(item => item.day_number === day).sort((a, b) => a.order_index - b.order_index);
     const isWishlist = day === 0;
@@ -696,10 +716,10 @@ function App() {
       {receiptModalData && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
           <div style={{ backgroundColor: '#ffffff', width: '100%', maxWidth: '400px', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', maxHeight: '90vh', position: 'relative' }}>
-            {(previewImageUrl || receiptModalData.image_url) && (
+            {(receiptModalData.receipt_image || receiptModalData.image_url) && (
               <div style={{ width: '100%', height: '35vh', backgroundColor: '#e2e8f0', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
-                {previewImageUrl ? (
-                  <img src={previewImageUrl} alt="Receipt" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                {receiptModalData.receipt_image ? (
+                  <LocalImagePreview file={receiptModalData.receipt_image} alt="Receipt" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                 ) : (
                   <AuthenticatedImage imageUrl={receiptModalData.image_url} token={token} baseUrl={BASE_URL} alt="Receipt" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                 )}
@@ -708,7 +728,7 @@ function App() {
             )}
             <div style={{ backgroundColor: '#48bb78', color: 'white', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: '1.2em', fontWeight: 600 }}>{isReceiptModalForPreview ? '確認收據內容' : '收據說明'}</h3>
-              {!previewImageUrl && !receiptModalData.image_url && (
+              {!receiptModalData.receipt_image && !receiptModalData.image_url && (
                 <button onClick={() => setReceiptModalData(null)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: 'none' }}>✕</button>
               )}
             </div>

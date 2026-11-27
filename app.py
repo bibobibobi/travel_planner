@@ -408,7 +408,12 @@ def uploaded_file(filename):
     current_user_id = get_jwt_identity()
     if not all(has_trip_access(trip_id, current_user_id) for trip_id in trip_ids):
         return jsonify({"error": "您沒有查看此圖片的權限"}), 403
-    return send_from_directory(current_app.config['UPLOAD_FOLDER'], filename)
+    response = send_from_directory(current_app.config['UPLOAD_FOLDER'], filename)
+    # The response is personalized by the JWT and trip membership.  Never let a
+    # browser or intermediary retain it for another user.
+    response.cache_control.private = True
+    response.cache_control.no_store = True
+    return response
 
 # ====== 註冊與登入 API ======
 @api.route('/api/register', methods=['POST'])
