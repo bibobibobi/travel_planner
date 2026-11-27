@@ -8,10 +8,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt requirements-prod.txt requirements-dev.txt ./
 RUN python -m pip install -r requirements-prod.txt -r requirements-dev.txt websocket-client
 COPY app.py ./
+COPY websocket_worker.py ./
 COPY tests/ tests/
 COPY verify/ verify/
 ENV DATABASE_URL=sqlite:////tmp/travel-verify.db \
     SOCKETIO_ASYNC_MODE=gevent \
+    ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 \
     JWT_SECRET_KEY=verification-only-jwt-secret-32-bytes \
     SECRET_KEY=verification-only-secret \
     INVITE_CODE=verification-only-invite \

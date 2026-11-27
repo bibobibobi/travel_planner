@@ -1,6 +1,8 @@
 """Exercise a real WebSocket connection against the production worker."""
 
+import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -8,6 +10,7 @@ import time
 
 import requests
 import socketio
+import websocket
 
 
 def main():
@@ -17,15 +20,19 @@ def main():
     )
     server = subprocess.Popen(
         [
-            "gunicorn", "-k", "geventwebsocket.gunicorn.workers.GeventWebSocketWorker",
+            "gunicorn", "-k", "websocket_worker.OriginCheckedGeventWorker",
             "-w", "1", "--graceful-timeout", "2", "-b", "127.0.0.1:5001", "app:app",
         ],
         env=os.environ.copy(),
     )
-    client = socketio.Client(reconnection=False)
-    outsider = socketio.Client(reconnection=False)
-    outsider_second = socketio.Client(reconnection=False)
-    short = socketio.Client(reconnection=False)
+    allowed_origin = 'http://localhost:5173'
+    denied_origin = 'http://localhost.evil:5173'
+    def make_client(origin=allowed_origin):
+        return socketio.Client(reconnection=False, websocket_extra_options={'origin': origin})
+    client = make_client()
+    outsider = make_client()
+    outsider_second = make_client()
+    short = make_client()
     received = threading.Event()
     leaked = threading.Event()
     client.on("itinerary_updated", lambda _data: received.set())
@@ -43,7 +50,28 @@ def main():
             raise RuntimeError("Gunicorn did not become ready")
 
         base = "http://127.0.0.1:5001"
-        anonymous = socketio.Client(reconnection=False)
+        empty_polling = requests.get(base + '/socket.io/?EIO=4&transport=polling',
+                                     headers={'Origin': ''}, timeout=5)
+        assert empty_polling.status_code == 403
+        for origin_header in (b'Origin:\r\n', b'Origin: \r\n', b'Origin: null\r\n',
+                              b'Origin: http://localhost.evil:5173\r\n'):
+            request = (b'GET /socket.io/?EIO=4&transport=websocket HTTP/1.1\r\n'
+                       b'Host: 127.0.0.1:5001\r\nUpgrade: websocket\r\n'
+                       b'Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n'
+                       b'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n' + origin_header + b'\r\n')
+            with socket.create_connection(('127.0.0.1', 5001), timeout=5) as connection:
+                connection.sendall(request)
+                status = connection.recv(1024).split(b'\r\n', 1)[0]
+                assert status.startswith(b'HTTP/1.1 403 '), status
+        no_origin_anonymous = socketio.Client(reconnection=False, websocket_extra_options={'suppress_origin': True})
+        try:
+            no_origin_anonymous.connect(base, transports=['websocket'], wait_timeout=5)
+        except socketio.exceptions.ConnectionError:
+            pass
+        else:
+            no_origin_anonymous.disconnect()
+            raise AssertionError('Anonymous client without Origin was accepted')
+        anonymous = make_client()
         try:
             anonymous.connect(base, transports=["websocket"], wait_timeout=5)
         except socketio.exceptions.ConnectionError:
@@ -67,6 +95,51 @@ def main():
         response = requests.post(base + "/api/trips", headers=headers, json={"title": "test", "start_date": "2026-01-01", "end_date": "2026-01-02"}, timeout=5)
         response.raise_for_status()
         trip_id = response.json()["id"]
+        no_origin = socketio.Client(reconnection=False, websocket_extra_options={'suppress_origin': True})
+        no_origin.connect(base, auth={'token': token}, transports=['websocket'], wait_timeout=5)
+        assert no_origin.call('join_trip', {'trip_id': trip_id}, timeout=5)['ok']
+        no_origin.disconnect()
+        try:
+            unexpected = websocket.create_connection(
+                'ws://127.0.0.1:5001/socket.io/?EIO=4&transport=websocket',
+                origin=denied_origin, timeout=5)
+        except websocket.WebSocketBadStatusException as error:
+            assert error.status_code == 403
+        else:
+            unexpected.close()
+            raise AssertionError('Disallowed origin received WebSocket HTTP 101')
+        polling_open = requests.get(base + '/socket.io/?EIO=4&transport=polling',
+                                    headers={'Origin': allowed_origin}, timeout=5)
+        polling_open.raise_for_status()
+        polling_sid = json.loads(polling_open.text[1:])['sid']
+        try:
+            unexpected = websocket.create_connection(
+                f'ws://127.0.0.1:5001/socket.io/?EIO=4&transport=websocket&sid={polling_sid}',
+                origin=denied_origin, timeout=5)
+        except websocket.WebSocketBadStatusException as error:
+            assert error.status_code == 403
+        else:
+            unexpected.close()
+            raise AssertionError('Disallowed origin upgraded an existing polling session')
+        polling = make_client()
+        polling.connect(base, headers={'Origin': allowed_origin}, auth={'token': token}, transports=['polling'], wait_timeout=5)
+        assert polling.transport() == 'polling'
+        assert polling.call('join_trip', {'trip_id': trip_id}, timeout=5)['ok']
+        polling.disconnect()
+        upgraded = socketio.Client(reconnection=False, websocket_extra_options={'suppress_origin': True})
+        upgraded.connect(base, headers={'Origin': allowed_origin}, auth={'token': token}, transports=['polling', 'websocket'], wait_timeout=5)
+        assert upgraded.transport() == 'websocket'
+        upgraded.disconnect()
+        for transport in ('polling', 'websocket'):
+            denied = make_client(denied_origin)
+            try:
+                request_headers = {'Origin': denied_origin} if transport == 'polling' else {}
+                denied.connect(base, headers=request_headers, auth={'token': token}, transports=[transport], wait_timeout=5)
+            except socketio.exceptions.ConnectionError:
+                pass
+            else:
+                denied.disconnect()
+                raise AssertionError(f'Disallowed origin accepted over {transport}')
         client.connect(base, auth={"token": token}, transports=["websocket"], wait_timeout=5)
         assert client.transport() == "websocket"
         outsider.connect(base, auth={"token": other_token}, transports=["websocket"], wait_timeout=5)

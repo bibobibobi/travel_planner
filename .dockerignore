@@ -4,6 +4,7 @@
 !requirements-prod.txt
 !requirements-dev.txt
 !app.py
+!websocket_worker.py
 !tests/
 !tests/**
 !verify/

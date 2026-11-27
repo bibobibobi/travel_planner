@@ -1,9 +1,12 @@
 import http.client
+import ipaddress
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from flask import Blueprint, Flask, current_app, jsonify, request, send_from_directory
@@ -44,6 +47,48 @@ jwt = JWTManager()
 socketio = SocketIO()
 DEFAULT_UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 VALID_SHARE_ROLES = ('viewer', 'editor')
+
+
+def parse_allowed_origins(value):
+    """Parse exact HTTP(S) origins; absent configuration allows no Origin."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        entries = value.split(',')
+    elif isinstance(value, (list, tuple)):
+        entries = value
+    else:
+        raise TypeError('ALLOWED_ORIGINS must be a comma-separated string or list')
+    result = []
+    for item in entries:
+        if not isinstance(item, str):
+            raise TypeError('Invalid ALLOWED_ORIGINS entry')
+        origin = item.strip()
+        if not origin:
+            continue
+        try:
+            if not re.fullmatch(r'https?://(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::[0-9]+)?', origin):
+                raise ValueError
+            parsed = urlsplit(origin)
+            host = parsed.hostname
+            port = parsed.port
+            if (parsed.scheme not in ('http', 'https') or not host or parsed.username is not None
+                    or parsed.password is not None or parsed.path or parsed.query or parsed.fragment
+                    or '?' in origin or '#' in origin or '@' in origin
+                    or any(c.isspace() for c in origin) or (port is not None and not 1 <= port <= 65535)):
+                raise ValueError
+            if ':' in host:
+                ipaddress.IPv6Address(host)
+            elif not all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
+                         for label in host.split('.')):
+                raise ValueError
+            if parsed.netloc.endswith(':') or '*' in origin:
+                raise ValueError
+        except ValueError as error:
+            raise ValueError('Invalid ALLOWED_ORIGINS entry') from error
+        if origin not in result:
+            result.append(origin)
+    return result
 
 # ====== 自動匯率 API 與 1小時快取機制 ======
 rate_cache = {}
@@ -788,6 +833,7 @@ def create_app(test_config=None):
         SECRET_KEY=os.environ.get("SECRET_KEY", "fallback_secret_key"),
         UPLOAD_FOLDER=DEFAULT_UPLOAD_FOLDER,
         SOCKETIO_ASYNC_MODE=os.environ.get('SOCKETIO_ASYNC_MODE', 'threading'),
+        ALLOWED_ORIGINS=os.environ.get('ALLOWED_ORIGINS'),
     )
 
     if test_config:
@@ -799,14 +845,18 @@ def create_app(test_config=None):
             "SOCKETIO_ASYNC_MODE must be one of: threading, gevent, eventlet"
         )
 
+    allowed_origins = parse_allowed_origins(flask_app.config['ALLOWED_ORIGINS'])
+    flask_app.config['ALLOWED_ORIGINS'] = allowed_origins
     os.makedirs(flask_app.config['UPLOAD_FOLDER'], exist_ok=True)
-    CORS(flask_app)
+    CORS(flask_app, origins=[re.compile('^' + re.escape(origin) + '$') for origin in allowed_origins],
+         always_send=False, supports_credentials=False, vary_header=True)
     db.init_app(flask_app)
     jwt.init_app(flask_app)
     try:
         socketio.init_app(
             flask_app,
-            cors_allowed_origins="*",
+            cors_allowed_origins=lambda origin: origin in allowed_origins,
+            cors_credentials=False,
             async_mode=async_mode,
         )
     except (ValueError, ImportError) as error:
@@ -814,6 +864,17 @@ def create_app(test_config=None):
             f"Cannot initialize Socket.IO async mode '{async_mode}'; "
             "verify its dependencies are installed."
         ) from error
+    socket_wsgi_app = flask_app.wsgi_app
+
+    def reject_empty_socket_origin(environ, start_response):
+        # Engine.IO treats an empty Origin as if the header were absent.
+        if (environ.get('PATH_INFO', '').rstrip('/') == '/socket.io'
+                and environ.get('HTTP_ORIGIN') == ''):
+            start_response('403 Forbidden', [('Content-Type', 'text/plain'), ('Content-Length', '0')])
+            return [b'']
+        return socket_wsgi_app(environ, start_response)
+
+    flask_app.wsgi_app = reject_empty_socket_origin
     flask_app.register_blueprint(api)
     return flask_app
 

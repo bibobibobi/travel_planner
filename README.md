@@ -61,10 +61,17 @@
 
 ```ini
 Environment=SOCKETIO_ASYNC_MODE=gevent
-ExecStart=/path/to/venv/bin/gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 -b 127.0.0.1:5001 app:app
+Environment=ALLOWED_ORIGINS=https://bobo-travel-planner.duckdns.org
+ExecStart=/path/to/venv/bin/gunicorn -k websocket_worker.OriginCheckedGeventWorker -w 1 -b 127.0.0.1:5001 app:app
 ```
 
-請依實際路徑與既有 service 設定調整，並確保 Nginx 代理 `/socket.io/` 的 WebSocket upgrade。Gunicorn 的 Socket.IO 部署應維持單 worker；多程序擴充需要相容的負載平衡、sticky sessions 與共享訊息佇列。本設定不處理 Socket.IO 的 JWT 驗證及 room 授權，正式使用前仍須另行修復。
+請依實際路徑與既有 service 設定調整，並確保 Nginx 代理 `/socket.io/` 的 WebSocket upgrade。Gunicorn 的 Socket.IO 部署應維持單 worker；多程序擴充需要相容的負載平衡、sticky sessions 與共享訊息佇列。
+
+### 瀏覽器來源設定
+
+`ALLOWED_ORIGINS` 以逗號分隔完整的 HTTP／HTTPS origin，例如本機 `http://localhost:5173,http://127.0.0.1:5173`；正式同源服務則設定 `https://bobo-travel-planner.duckdns.org`。不包含路徑、尾端斜線、帳密、query 或 fragment，也不接受 `*` 或 `null`。未設定或空白時，不允許任何帶 Origin 的跨來源請求；無效設定會使應用程式啟動失敗。沒有 Origin 的非瀏覽器客戶端仍須通過 JWT 與行程授權。CORS 並非身分驗證或 API 存取控制。
+
+REST 與 Socket.IO 使用相同的精確 allowlist；瀏覽器的 Origin 必須包含在設定中，包括正式 HTTPS 同源網址。REST 使用 Authorization bearer token，不啟用跨來源 cookie credentials。`gevent-websocket` 原生 worker 在執行 Flask 前就送出 HTTP 101，因此部署必須使用上述 `OriginCheckedGeventWorker`，才能在 WebSocket 升級前拒絕不允許的 Origin；它讀取實際 Flask app 的 `ALLOWED_ORIGINS`，未能取得設定時採拒絕策略。變更後重啟服務前，應確認實際 Nginx 設定會轉送原始 `Host`、正確的 `X-Forwarded-Proto` 與 `/socket.io/` 的 Upgrade／Connection headers，並確認公開網址與 allowlist 完全相符。現有程式未啟用 ProxyFix；不要直接信任來自公網的 forwarded headers，若日後需要 ProxyFix，須先確認代理拓撲並限制可信代理數量與直接存取。上述正式 Nginx 設定尚未在本機驗證。
 
 ## 技術架構
 
