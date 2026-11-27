@@ -127,3 +127,19 @@ REST 與 Socket.IO 使用相同的精確 allowlist；瀏覽器的 Origin 必須�
 本專案由我負責需求規劃、系統功能拆解、前後端整合與部署流程，並運用 AI 協助開發及迭代。
 
 開發過程中，從行程拖曳互動、資料庫架構調整，到 Linux 主機部署與 Nginx 反向代理，逐步完成具備實際使用情境的全端應用程式。
+
+## 健康檢查（供未來 CD 使用）
+
+- `GET /api/health` 是 liveness check，不需 JWT，也不會連資料庫或外部服務；正常回傳 `200 {"status":"ok"}`。
+- `GET /api/ready` 是 readiness check，不需 JWT；以唯讀 `SELECT 1` 探測資料庫連線與基本查詢。成功回傳 `200 {"status":"ready","database":"ok"}`；連線或查詢失敗時回傳 `503 {"status":"not_ready","database":"unavailable"}`。
+
+PostgreSQL 的連線逾時及交易內查詢逾時預設皆為五秒，可用 `HEALTH_CHECK_TIMEOUT_SECONDS`（大於 0 且至多 30）調整。
+
+本機驗證：
+
+```bash
+curl -i http://127.0.0.1:5001/api/health
+curl -i http://127.0.0.1:5001/api/ready
+```
+
+未來 CD 可在程序啟動後輪詢 `/api/health`，再以 `/api/ready` 的 200 作為導流前提；503 應保留或重試。`SELECT 1` 只能確認當下資料庫可執行極小的唯讀 SQL，不能保證所有資料表、遷移狀態、權限、資料內容、外部服務或業務功能正常。

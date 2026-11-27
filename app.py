@@ -26,6 +26,8 @@ from google.api_core.exceptions import GoogleAPIError
 
 # ====== 💡 新增：用來產生分享安全代碼的加密工具 ======
 from itsdangerous import BadData, URLSafeTimedSerializer
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 # 💡 密碼加密與 JWT 套件
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -348,6 +350,31 @@ def on_leave(data=None):
 @api.route('/')
 def index():
     return jsonify({"message": "API 伺服器運作中！"})
+
+
+@api.route('/api/health')
+def health():
+    """Liveness probe: confirm that the HTTP application can serve a request."""
+    return jsonify({"status": "ok"})
+
+
+@api.route('/api/ready')
+def ready():
+    """Readiness probe: verify a minimal, read-only database query."""
+    try:
+        # PostgreSQL's timeout applies only to this transaction. SQLite (used by
+        # tests) does not support this setting, so it intentionally skips it.
+        if db.session.get_bind().dialect.name == 'postgresql':
+            timeout = f"{int(current_app.config['HEALTH_CHECK_TIMEOUT_SECONDS'] * 1000)}ms"
+            db.session.execute(text("SELECT set_config('statement_timeout', :timeout, true)"),
+                               {'timeout': timeout})
+        db.session.execute(text('SELECT 1'))
+    except SQLAlchemyError:
+        # A failed statement leaves a SQLAlchemy session unusable until rollback.
+        db.session.rollback()
+        return jsonify({"status": "not_ready", "database": "unavailable"}), 503
+    return jsonify({"status": "ready", "database": "ok"})
+
 
 @api.route('/api/uploads/<filename>')
 def uploaded_file(filename):
@@ -834,10 +861,20 @@ def create_app(test_config=None):
         UPLOAD_FOLDER=DEFAULT_UPLOAD_FOLDER,
         SOCKETIO_ASYNC_MODE=os.environ.get('SOCKETIO_ASYNC_MODE', 'threading'),
         ALLOWED_ORIGINS=os.environ.get('ALLOWED_ORIGINS'),
+        HEALTH_CHECK_TIMEOUT_SECONDS=float(os.environ.get('HEALTH_CHECK_TIMEOUT_SECONDS', '5')),
     )
 
     if test_config:
         flask_app.config.update(test_config)
+
+    health_timeout = flask_app.config['HEALTH_CHECK_TIMEOUT_SECONDS']
+    if not isinstance(health_timeout, (int, float)) or not 0 < health_timeout <= 30:
+        raise ValueError('HEALTH_CHECK_TIMEOUT_SECONDS must be between 0 and 30 seconds')
+    database_uri = flask_app.config['SQLALCHEMY_DATABASE_URI']
+    if isinstance(database_uri, str) and database_uri.startswith('postgresql'):
+        flask_app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            'connect_args': {'connect_timeout': health_timeout},
+        }
 
     async_mode = flask_app.config['SOCKETIO_ASYNC_MODE']
     if async_mode not in ('threading', 'gevent', 'eventlet'):

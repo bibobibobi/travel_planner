@@ -50,6 +50,10 @@ def main():
             raise RuntimeError("Gunicorn did not become ready")
 
         base = "http://127.0.0.1:5001"
+        health = requests.get(base + '/api/health', timeout=5)
+        assert health.status_code == 200 and health.json() == {'status': 'ok'}
+        ready = requests.get(base + '/api/ready', timeout=5)
+        assert ready.status_code == 200 and ready.json() == {'status': 'ready', 'database': 'ok'}
         empty_polling = requests.get(base + '/socket.io/?EIO=4&transport=polling',
                                      headers={'Origin': ''}, timeout=5)
         assert empty_polling.status_code == 403
