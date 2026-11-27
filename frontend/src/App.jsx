@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import Auth from './Auth'
 import SwipeableItem from './SwipeableItem'
@@ -8,6 +8,7 @@ import './App.css'
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [token, setToken] = useState(() => localStorage.getItem('travel_token'))
 
   const [trips, setTrips] = useState([])
   const [currentTrip, setCurrentTrip] = useState(null)
@@ -44,6 +45,7 @@ function App() {
   
   // 💡 新增：用來儲存 WebSocket 連線實例的狀態
   const [socket, setSocket] = useState(null);
+  const socketRef = useRef(null);
 
   useEffect(() => localStorage.setItem('travelBaseCurrency', baseCurrency), [baseCurrency]);
 
@@ -52,36 +54,77 @@ function App() {
 
   // 💡 新增 1：初始化 WebSocket 連線
   useEffect(() => {
+    if (!isLoggedIn || !token) return;
     const newSocket = io(BASE_URL || window.location.origin, {
       path: '/socket.io',
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      auth: { token }
     });
+    const onError = () => newSocket.disconnect();
+    newSocket.on('connect_error', onError);
+    socketRef.current = newSocket;
     setSocket(newSocket);
 
     // 當元件卸載時關閉連線，避免記憶體洩漏
-    return () => newSocket.close();
-  }, [BASE_URL]);
+    return () => {
+      newSocket.off('connect_error', onError);
+      newSocket.disconnect();
+      if (socketRef.current === newSocket) socketRef.current = null;
+    };
+  }, [BASE_URL, isLoggedIn, token]);
+
+  useEffect(() => {
+    const onStorage = (event) => {
+      if (event.key === 'travel_token') {
+        socketRef.current?.disconnect();
+        socketRef.current = null;
+        setToken(event.newValue);
+        setIsLoggedIn(Boolean(event.newValue));
+        setCurrentTrip(null);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // 💡 新增 2：管理房間加入/離開與監聽推播事件
   useEffect(() => {
     if (socket && currentTrip) {
+      let active = true;
+      const refresh = (endpoint, setData) => {
+        if (!active || socketRef.current !== socket || localStorage.getItem('travel_token') !== token) return;
+        fetch(`${API_BASE}/${endpoint}?trip_id=${currentTrip.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }).then(res => res.json()).then(data => {
+          if (active && socketRef.current === socket && localStorage.getItem('travel_token') === token) {
+            setData(Array.isArray(data) ? data : []);
+          }
+        });
+      };
       // 告訴伺服器：我進入這個行程了，請把我加進該行程的廣播房間
-      socket.emit('join_trip', { trip_id: currentTrip.id });
+      const join = () => socket.emit('join_trip', { trip_id: currentTrip.id });
+      if (socket.connected) join();
+      socket.on('connect', join);
 
       // 註冊廣播接收器：收到更新訊號就重新拉取該分頁的最新資料
-      socket.on('itinerary_updated', () => fetchItems(currentTrip.id));
-      socket.on('shopping_updated', () => fetchShopping(currentTrip.id));
-      socket.on('expenses_updated', () => fetchExpenses(currentTrip.id));
+      const onItinerary = () => refresh('items', setItems);
+      const onShopping = () => refresh('shopping', setShoppingItems);
+      const onExpenses = () => refresh('expenses', setExpenses);
+      socket.on('itinerary_updated', onItinerary);
+      socket.on('shopping_updated', onShopping);
+      socket.on('expenses_updated', onExpenses);
 
       // 清理函數：當退回大廳或切換行程時，離開舊房間並取消監聽
       return () => {
-        socket.emit('leave_trip', { trip_id: currentTrip.id });
-        socket.off('itinerary_updated');
-        socket.off('shopping_updated');
-        socket.off('expenses_updated');
+        active = false;
+        if (socket.connected) socket.emit('leave_trip', { trip_id: currentTrip.id });
+        socket.off('connect', join);
+        socket.off('itinerary_updated', onItinerary);
+        socket.off('shopping_updated', onShopping);
+        socket.off('expenses_updated', onExpenses);
       };
     }
-  }, [socket, currentTrip]);
+  }, [socket, currentTrip, token, API_BASE]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -107,7 +150,11 @@ function App() {
   };
 
   const handleLogout = () => {
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    setSocket(null);
     localStorage.removeItem('travel_token');
+    setToken(null);
     setIsLoggedIn(false);
     setCurrentTrip(null);
   };
@@ -361,7 +408,7 @@ function App() {
   }
 
   if (!isLoggedIn) {
-    return <Auth onLoginSuccess={() => setIsLoggedIn(true)} />;
+    return <Auth onLoginSuccess={() => { setToken(localStorage.getItem('travel_token')); setIsLoggedIn(true); }} />;
   }
 
   if (!currentTrip) {

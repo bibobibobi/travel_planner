@@ -38,16 +38,25 @@ def main():
             raise RuntimeError("Gunicorn did not become ready")
 
         base = "http://127.0.0.1:5001"
+        anonymous = socketio.Client(reconnection=False)
+        try:
+            anonymous.connect(base, transports=["websocket"], wait_timeout=5)
+        except socketio.exceptions.ConnectionError:
+            pass
+        else:
+            anonymous.disconnect()
+            raise AssertionError("Anonymous connection was accepted")
         credentials = {"email": "verify@example.invalid", "password": "test-password"}
         response = requests.post(base + "/api/register", json={**credentials, "invite_code": "verification-only-invite"}, timeout=5)
         response.raise_for_status()
         response = requests.post(base + "/api/login", json=credentials, timeout=5)
         response.raise_for_status()
-        headers = {"Authorization": "Bearer " + response.json()["access_token"]}
+        token = response.json()["access_token"]
+        headers = {"Authorization": "Bearer " + token}
         response = requests.post(base + "/api/trips", headers=headers, json={"title": "test", "start_date": "2026-01-01", "end_date": "2026-01-02"}, timeout=5)
         response.raise_for_status()
         trip_id = response.json()["id"]
-        client.connect(base, transports=["websocket"], wait_timeout=5)
+        client.connect(base, auth={"token": token}, transports=["websocket"], wait_timeout=5)
         assert client.transport() == "websocket"
         client.emit("join_trip", {"trip_id": trip_id})
         time.sleep(0.3)

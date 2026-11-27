@@ -1,6 +1,7 @@
 import http.client
 import json
 import os
+import threading
 import time
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from flask_jwt_extended import (
     create_access_token,
     get_jwt_identity,
     jwt_required,
+    verify_jwt_in_request,
 )
 
 # ====== 💡 新增：WebSockets 即時通訊套件 ======
@@ -147,9 +149,48 @@ class ShoppingItem(db.Model):
 
 # ================= WebSockets 房間與事件管理 =================
 
+@socketio.on('connect')
+def socket_connect(auth):
+    sid = request.sid
+    app_instance = current_app._get_current_object()
+    try:
+        token = auth.get('token') if isinstance(auth, dict) else None
+        if not isinstance(token, str) or not token or any(c.isspace() for c in token):
+            return False
+        with app_instance.test_request_context(headers={'Authorization': f'Bearer {token}'}):
+            _, claims = verify_jwt_in_request(locations=['headers'])
+            identity = get_jwt_identity()
+            if not isinstance(identity, str) or not identity.isascii() or not identity.isdecimal():
+                return False
+            user_id = int(identity)
+            if user_id <= 0 or db.session.get(User, user_id) is None:
+                return False
+            expiry = claims['exp']
+        registry = app_instance.extensions['socket_auth_registry']
+        with registry['lock']:
+            registry['sids'][sid] = {'user_id': user_id, 'exp': expiry}
+    except Exception:  # noqa: BLE001 -- authentication must fail closed
+        return False
+
+
+@socketio.on('disconnect')
+def socket_disconnect(reason=None):
+    registry = current_app.extensions['socket_auth_registry']
+    with registry['lock']:
+        registry['sids'].pop(request.sid, None)
+
+
+def socket_authenticated():
+    registry = current_app.extensions['socket_auth_registry']
+    with registry['lock']:
+        return request.sid in registry['sids']
+
+
 @socketio.on('join_trip')
 def on_join(data):
     """當前端進入某個行程分頁時觸發，加入專屬廣播房間"""
+    if not socket_authenticated() or not isinstance(data, dict):
+        return
     trip_id = data.get('trip_id')
     if trip_id:
         room = f"trip_{trip_id}"
@@ -158,6 +199,8 @@ def on_join(data):
 @socketio.on('leave_trip')
 def on_leave(data):
     """當前端退回大廳時觸發，離開專屬廣播房間"""
+    if not socket_authenticated() or not isinstance(data, dict):
+        return
     trip_id = data.get('trip_id')
     if trip_id:
         room = f"trip_{trip_id}"
@@ -639,6 +682,7 @@ def modify_shopping(item_id):
 def create_app(test_config=None):
     """Create an application instance with injectable settings for tests."""
     flask_app = Flask(__name__)
+    flask_app.extensions['socket_auth_registry'] = {'lock': threading.RLock(), 'sids': {}}
     flask_app.config.from_mapping(
         SQLALCHEMY_DATABASE_URI=os.environ.get('DATABASE_URL'),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
