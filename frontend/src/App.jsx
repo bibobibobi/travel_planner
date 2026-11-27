@@ -6,6 +6,40 @@ import SwipeableItem from './SwipeableItem'
 import { io } from 'socket.io-client' 
 import './App.css'
 
+function AuthenticatedImage({ imageUrl, token, baseUrl, alt, style }) {
+  const [blobUrl, setBlobUrl] = useState(null);
+
+  useEffect(() => {
+    if (!imageUrl || !token) return undefined;
+
+    const controller = new AbortController();
+    let objectUrl;
+    const requestUrl = imageUrl.startsWith('http://') || imageUrl.startsWith('https://')
+      ? imageUrl
+      : `${baseUrl}${imageUrl}`;
+
+    fetch(requestUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
+      .then((response) => (response.ok ? response.blob() : Promise.reject(new Error('Image request failed'))))
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError') setBlobUrl(null);
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [baseUrl, imageUrl, token]);
+
+  return blobUrl ? <img src={blobUrl} alt={alt} style={style} /> : null;
+}
+
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [token, setToken] = useState(() => localStorage.getItem('travel_token'))
@@ -428,7 +462,7 @@ function App() {
     return <span style={{ color: '#2d3748', fontWeight: 600, display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-all' }}>{desc}</span>;
   };
 
-  const displayImageUrl = receiptModalData?.receipt_image ? URL.createObjectURL(receiptModalData.receipt_image) : receiptModalData?.image_url;
+  const previewImageUrl = receiptModalData?.receipt_image ? URL.createObjectURL(receiptModalData.receipt_image) : null;
 
   const renderDayColumn = (day, title = null) => {
     const dayItems = items.filter(item => item.day_number === day).sort((a, b) => a.order_index - b.order_index);
@@ -662,15 +696,19 @@ function App() {
       {receiptModalData && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
           <div style={{ backgroundColor: '#ffffff', width: '100%', maxWidth: '400px', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', maxHeight: '90vh', position: 'relative' }}>
-            {displayImageUrl && (
+            {(previewImageUrl || receiptModalData.image_url) && (
               <div style={{ width: '100%', height: '35vh', backgroundColor: '#e2e8f0', display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
-                <img src={displayImageUrl} alt="Receipt" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                {previewImageUrl ? (
+                  <img src={previewImageUrl} alt="Receipt" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                ) : (
+                  <AuthenticatedImage imageUrl={receiptModalData.image_url} token={token} baseUrl={BASE_URL} alt="Receipt" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                )}
                 <button onClick={() => setReceiptModalData(null)} style={{ position: 'absolute', top: '12px', left: '12px', background: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: 'none', fontSize: '14px', zIndex: 2 }}>✕</button>
               </div>
             )}
             <div style={{ backgroundColor: '#48bb78', color: 'white', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: '1.2em', fontWeight: 600 }}>{isReceiptModalForPreview ? '確認收據內容' : '收據說明'}</h3>
-              {!displayImageUrl && (
+              {!previewImageUrl && !receiptModalData.image_url && (
                 <button onClick={() => setReceiptModalData(null)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: 'none' }}>✕</button>
               )}
             </div>
@@ -820,7 +858,7 @@ function App() {
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', backgroundColor: '#ffffff', boxSizing: 'border-box', width: '100%', gap: '10px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
                           <input type="checkbox" checked={item.is_bought} onChange={() => toggleBoughtStatus(item)} disabled={!canEdit} style={{ width: '22px', height: '22px', cursor: canEdit ? 'pointer' : 'default', accentColor: '#38b2ac', flexShrink: 0 }} />
-                          {item.image_url && (<a href={item.image_url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}><img src={item.image_url} alt="商品" style={{ width: '45px', height: '45px', borderRadius: '6px', objectFit: 'cover', border: '1px solid #ddd' }} /></a>)}
+                          {item.image_url && <AuthenticatedImage imageUrl={item.image_url} token={token} baseUrl={BASE_URL} alt="商品" style={{ width: '45px', height: '45px', borderRadius: '6px', objectFit: 'cover', border: '1px solid #ddd', flexShrink: 0 }} />}
                           <div style={{ flex: 1, minWidth: 0, textDecoration: item.is_bought ? 'line-through' : 'none' }}>
                             <strong style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: '#2d3748', fontSize: '1.05em', wordBreak: 'break-word' }}>{item.name}</strong>
                             {item.location && <span style={{ fontSize: '0.85em', color: '#718096', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word', marginTop: '4px' }}>📍 {item.location}</span>}
@@ -983,17 +1021,15 @@ function App() {
                               ≈ {exp.twd_amount ? Number(exp.twd_amount).toLocaleString() : '---'} TWD
                             </span>
                             {exp.image_url && !isSmartExp && (
-                              <a
-                                href={exp.image_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
+                              <button
+                                type="button"
+                                onClick={() => { setReceiptModalData({ image_url: exp.image_url }); setIsReceiptModalForPreview(false); }}
                                 onTouchStart={(e) => e.stopPropagation()}
                                 onMouseDown={(e) => e.stopPropagation()}
-                                style={{ textDecoration: 'none', marginTop: '4px', fontSize: '0.75em', backgroundColor: '#edf2f7', color: '#4a5568', padding: '2px 6px', borderRadius: '4px' }}
+                                style={{ textDecoration: 'none', marginTop: '4px', fontSize: '0.75em', backgroundColor: '#edf2f7', color: '#4a5568', padding: '2px 6px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
                               >
                                 🖼️ 照片
-                              </a>
+                              </button>
                             )}
                           </div>
 

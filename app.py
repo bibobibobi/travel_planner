@@ -5,6 +5,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -377,7 +378,22 @@ def ready():
 
 
 @api.route('/api/uploads/<filename>')
+@jwt_required()
 def uploaded_file(filename):
+    """Serve an upload only to users who can still read its trip."""
+    image_url = f"/api/uploads/{filename}"
+    trip_ids = {
+        trip_id for (trip_id,) in db.session.query(Expense.trip_id).filter_by(image_url=image_url)
+    }
+    trip_ids.update(
+        trip_id for (trip_id,) in db.session.query(ShoppingItem.trip_id).filter_by(image_url=image_url)
+    )
+    if not trip_ids:
+        return jsonify({"error": "圖片不存在"}), 404
+
+    current_user_id = get_jwt_identity()
+    if not all(has_trip_access(trip_id, current_user_id) for trip_id in trip_ids):
+        return jsonify({"error": "您沒有查看此圖片的權限"}), 403
     return send_from_directory(current_app.config['UPLOAD_FOLDER'], filename)
 
 # ====== 註冊與登入 API ======
@@ -731,7 +747,7 @@ def handle_expenses():
         if 'receipt_image' in request.files:
             file = request.files['receipt_image']
             if file.filename != '':
-                filename = secure_filename(f"exp_{int(datetime.now().timestamp())}_{file.filename}")
+                filename = secure_filename(f"exp_{uuid.uuid4().hex}_{file.filename}")
                 file.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
 
@@ -811,7 +827,7 @@ def handle_shopping():
         if 'item_image' in request.files:
             file = request.files['item_image']
             if file.filename != '':
-                filename = secure_filename(f"shop_{int(datetime.now().timestamp())}_{file.filename}")
+                filename = secure_filename(f"shop_{uuid.uuid4().hex}_{file.filename}")
                 file.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
                 image_url = f"/api/uploads/{filename}"
         new_shop = ShoppingItem(trip_id=trip_id, name=name, location=location, is_bought=False, image_url=image_url)
