@@ -180,3 +180,14 @@ Validator 是只使用 Python 3.10 以上標準函式庫的獨立腳本。它在
 SHA256 只證明讀取到的位元組符合提供的摘要，**不驗證發布者身分**。驗證也不會鎖定原始路徑，來源檔案在成功後仍可能被替換；未來部署流程必須對即將解壓縮的同一檔案安全開啟並重新驗證，不能僅信任先前驗證結果。
 
 執行時應使用非 root 帳號，並確保來源檔案的所有父目錄由受信任的管理者控制：`O_NOFOLLOW` 只保護最終路徑元件，不保護可被替換的父目錄。Linux 也使用 `O_NONBLOCK` 避免來源被替換成 FIFO 時開啟阻塞。Validator 逐一檢查 tar 的實體 header、兩個結束零區塊與後續零填充，並限制最多 2,000 個實體 header 及每個 PAX metadata 16 KiB；PAX 僅允許打包所需的 `path` 和 `mtime`。60 MiB 解壓縮資料流限制並不等於程序記憶體上限；正式入口仍須另設執行時間與適當的程序資源限制。
+
+### 安全解壓縮至 staging
+
+```bash
+python scripts/extract_artifact.py --artifact /opt/travel-app/incoming/artifact.tar.gz \
+  --revision COMMIT_SHA --sha256 SHA256 --staging-dir /opt/travel-app/staging
+```
+
+staging 必須預先存在，路徑各層不得是 symbolic link 或 reparse point；Linux 上 staging 必須由有效 UID 擁有，且不允許 group 或 other 存取（正式部署預期 700），不符合時拒絕，不自動更改權限或擁有者。父目錄、執行帳號與同 UID 的其他程序均須受信任：路徑檢查無法消除所有父目錄替換競態，也不防禦任意同 UID 程序。Linux 禁止 root 執行；Windows 依賴受信任的 ACL，工具不修改 ACL。此工具以 Validator 的私有快照完成驗證與解壓縮，兩次使用相同解析及限制，並逐檔核對內容摘要。它在 staging 建立獨立暫存目錄，不採用封存的權限或擁有者，Linux 目錄為 700、檔案為 600；Windows 權限由 ACL 決定，chmod 並不等同 ACL。暫存目錄不是完整安全沙箱。
+
+驗證和寫入完成後，Linux 使用 `renameat2(RENAME_NOREPLACE)` 原子發布為完整 SHA 目錄，Windows 使用不覆寫目標的 rename；不支援的平台或 Linux 核心／檔案系統會安全失敗。並行執行同一版本時只有一個可發布，不會覆寫現有版本。一般失敗會清理本次暫存目錄，但 SIGKILL 或系統突然中止可能留下 `.extract-` 目錄，需由管理者檢查；不自動清理其他版本。此工具不安裝套件、不執行產物或啟動服務。
