@@ -212,17 +212,21 @@ def snapshot_artifact(path, expected_digest):
         os.close(descriptor)
 
 
-def _read_member(tar, member, collect_revision):
+def _read_member(tar, member, collect_revision, output=None):
     stream = tar.extractfile(member)
     if stream is None:
         raise ValidationError("archive member data is unavailable")
     total = 0
     revision = bytearray()
+    digest = hashlib.sha256()
     while True:
         block = stream.read(CHUNK_SIZE)
         if not block:
             break
         total += len(block)
+        digest.update(block)
+        if output is not None and output.write(block) != len(block):
+            raise OSError("short write")
         if total > MAX_MEMBER_BYTES:
             raise ValidationError("archive member exceeds the size limit")
         if collect_revision:
@@ -231,7 +235,7 @@ def _read_member(tar, member, collect_revision):
             revision.extend(block)
     if total != member.size:
         raise ValidationError("truncated archive member")
-    return bytes(revision) if collect_revision else total
+    return (bytes(revision) if collect_revision else total), digest.hexdigest()
 
 
 def _read_exact(reader, size):
@@ -322,7 +326,7 @@ def validate_framing(snapshot):
         raise ValidationError("invalid or truncated tar archive") from error
 
 
-def validate_snapshot(snapshot, revision):
+def validate_snapshot(snapshot, revision, manifest=None, output_factory=None):
     validate_framing(snapshot)
     snapshot.seek(0)
     registry = PathRegistry()
@@ -347,7 +351,13 @@ def validate_snapshot(snapshot, revision):
                 contents += member.size
                 if contents > MAX_CONTENT_BYTES:
                     raise ValidationError("archive content exceeds the size limit")
-                data = _read_member(archive, member, member.name == "REVISION")
+                if output_factory is None:
+                    data, digest = _read_member(archive, member, member.name == "REVISION")
+                else:
+                    with output_factory(member.name) as output:
+                        data, digest = _read_member(archive, member, member.name == "REVISION", output)
+                if manifest is not None:
+                    manifest[member.name] = (member.size, digest)
                 sizes[member.name] = member.size
                 if member.name == "REVISION":
                     revision_bytes = data
