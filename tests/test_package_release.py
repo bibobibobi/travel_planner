@@ -11,6 +11,98 @@ from scripts import package_release as release
 SHA = 'a' * 40
 
 
+def make_archive(path, names, mode='w:gz'):
+    with tarfile.open(path, mode) as tar:
+        for name in names:
+            member = tarfile.TarInfo(name)
+            member.size = 1
+            tar.addfile(member, io.BytesIO(b'x'))
+
+
+@pytest.mark.parametrize('name', [
+    'dist/.env', 'dist/assets/.env.production', 'dist/.git/config',
+    'dist/backup.sql', 'dist/config.key', 'dist/app.js.bak',
+    'dist/node_modules/app.js', 'dist/venv/app.js', 'dist/uploads/app.png',
+    'dist/assets/.private/image.svg', 'dist/CON.txt', 'dist/file.js.',
+    'dist/aux.png', 'dist/a:stream.js', 'dist/x?.js', 'dist/x\x01.js',
+    'dist/trailing /x.js', 'dist/COM1.css', 'dist/LPT1.txt',
+])
+def test_release_archive_rejects_forbidden_paths(tmp_path, name):
+    archive = tmp_path / 'release.tar.gz'
+    make_archive(archive, [name])
+    with pytest.raises(ValueError):
+        release.validate_archive(archive, {name: b'x'})
+
+
+@pytest.mark.parametrize('name', [
+    '/absolute', '../escape', 'src/a:stream', 'src/CON.txt', 'src/prn',
+    'src/AUX.png', 'src/NUL', 'src/COM1.txt', 'src/LPT1',
+    'src/end.', 'src/end ', 'src/a?.txt', 'src/a|b', 'src/a\x01b', 'src/a\x7fb',
+])
+def test_git_archive_rejects_invalid_paths(tmp_path, name):
+    archive = tmp_path / 'git.tar'
+    make_archive(archive, [name], 'w:')
+    destination = tmp_path / 'export'
+    destination.mkdir()
+    with pytest.raises(ValueError):
+        release.extract_git_archive(archive, destination)
+
+
+@pytest.mark.parametrize('names', [
+    ['dist/A.js', 'dist/a.js'],
+    ['dist/Assets/a.js', 'dist/assets/b.js'],
+    ['dist/a.js', 'dist/a.js/child.js'],
+])
+def test_release_archive_rejects_case_and_directory_conflicts(tmp_path, names):
+    archive = tmp_path / 'release.tar.gz'
+    make_archive(archive, names)
+    with pytest.raises(ValueError):
+        release.validate_archive(archive, dict.fromkeys(names, b'x'))
+
+
+def test_nul_path_rejected():
+    assert not release.valid_path('dist/a\x00.js')
+
+
+@pytest.mark.parametrize('names', [
+    ['frontend/Assets/a.js', 'frontend/assets/b.js'],
+    ['frontend/Foo', 'frontend/foo'],
+    ['frontend/file', 'frontend/file/child'],
+])
+def test_git_archive_rejects_case_and_directory_conflicts(tmp_path, names):
+    archive = tmp_path / 'git.tar'
+    make_archive(archive, names, 'w:')
+    destination = tmp_path / 'export'
+    destination.mkdir()
+    with pytest.raises(ValueError):
+        release.extract_git_archive(archive, destination)
+
+
+def test_valid_unicode_and_static_resources(tmp_path, stage):
+    resources = ['dist/index.html', 'dist/圖片/照片.png', 'dist/assets/app.js',
+                 'dist/assets/style.css', 'dist/圖示.svg', 'dist/assets/font.woff2']
+    expected = dict.fromkeys(resources, b'x')
+    archive = tmp_path.parent / 'static.tar.gz'
+    make_archive(archive, resources)
+    release.validate_archive(archive, expected)
+    source = tmp_path.parent / 'unicode.tar'
+    make_archive(source, ['frontend/圖片/行程.txt'], 'w:')
+    destination = tmp_path.parent / 'unicode-export'
+    destination.mkdir()
+    release.extract_git_archive(source, destination)
+    assert (destination / 'frontend' / '圖片' / '行程.txt').read_bytes() == b'x'
+
+
+@pytest.mark.parametrize('name', ['.env', 'assets/.env.production', '.git/config',
+                                   'backup.sql', 'node_modules/a.js', 'assets/.hidden/a.svg'])
+def test_stage_rejects_forbidden_resources(stage, name):
+    path = stage / 'dist' / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'not a secret')
+    with pytest.raises(ValueError):
+        release.scan_stage(stage, SHA)
+
+
 @pytest.fixture
 def stage(tmp_path):
     for name in release.FILES - {'REVISION'}:

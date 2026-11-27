@@ -13,6 +13,12 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 FILES = {'app.py', 'websocket_worker.py', 'requirements.txt', 'requirements-prod.txt', 'REVISION'}
+STATIC_EXTENSIONS = frozenset({
+    '.html', '.js', '.mjs', '.css', '.svg', '.png', '.jpg', '.jpeg', '.gif',
+    '.webp', '.avif', '.ico', '.woff', '.woff2', '.ttf', '.otf',
+})
+FORBIDDEN_DIST_PARTS = frozenset({'node_modules', 'venv', 'uploads'})
+WINDOWS_DEVICE = re.compile(r'^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$', re.IGNORECASE)
 
 
 def command(args, **kwargs):
@@ -35,12 +41,47 @@ def resolve_ref(ref):
 def valid_path(name):
     path = PurePosixPath(name)
     return (bool(name) and not name.startswith('/') and '\\' not in name
-            and all(part not in ('', '.', '..') for part in name.split('/'))
-            and str(path) == name and not re.match(r'^[A-Za-z]:', name))
+            and all(part not in ('', '.', '..') and not part.endswith((' ', '.'))
+                    and not WINDOWS_DEVICE.fullmatch(part)
+                    and not any(ord(char) < 32 or 127 <= ord(char) <= 159
+                                or char in '<>:"|?*' for char in part)
+                    for part in name.split('/'))
+            and str(path) == name)
+
+
+class PathRegistry:
+    """Track implicit and explicit directories on case-insensitive systems."""
+
+    def __init__(self):
+        self.paths = {}
+        self.explicit = set()
+
+    def add(self, name, is_dir):
+        if not valid_path(name) or name in self.explicit:
+            raise ValueError('Invalid or duplicate path')
+        parts = name.split('/')
+        for index in range(len(parts)):
+            current = '/'.join(parts[:index + 1])
+            key = current.casefold()
+            directory = index < len(parts) - 1 or is_dir
+            previous = self.paths.get(key)
+            if previous is not None and previous != (current, directory):
+                raise ValueError('Conflicting path')
+            self.paths[key] = (current, directory)
+        self.explicit.add(name)
+
+
+def allowed_dist_path(name, is_dir=False):
+    parts = name.split('/')
+    if len(parts) < 2 or parts[0] != 'dist':
+        return False
+    if any(part.startswith('.') or part.casefold() in FORBIDDEN_DIST_PARTS for part in parts[1:]):
+        return False
+    return is_dir or PurePosixPath(name).suffix.lower() in STATIC_EXTENSIONS
 
 
 def allowed(name):
-    return name in FILES or name.startswith('dist/')
+    return valid_path(name) and (name in FILES or allowed_dist_path(name))
 
 
 def check_build_tree(directory):
@@ -57,15 +98,15 @@ def check_build_tree(directory):
 def scan_stage(stage, sha):
     """Reject links and non-regular files before reading any file content."""
     contents = {}
+    paths = PathRegistry()
     def visit(directory):
         for entry in os.scandir(directory):
             path = Path(entry.path)
             name = path.relative_to(stage).as_posix()
             info = path.stat(follow_symlinks=False)
-            if not valid_path(name):
-                raise ValueError('Invalid staging path')
+            paths.add(name, stat.S_ISDIR(info.st_mode))
             if stat.S_ISDIR(info.st_mode):
-                if name != 'dist' and not name.startswith('dist/'):
+                if name != 'dist' and not allowed_dist_path(name, is_dir=True):
                     raise ValueError('Unexpected staging directory')
                 visit(path)
             elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and allowed(name):
@@ -85,9 +126,11 @@ def scan_stage(stage, sha):
 
 def validate_archive(archive, expected):
     seen = set()
+    paths = PathRegistry()
     with tarfile.open(archive, 'r:gz') as tar:
         for member in tar:
             name = member.name
+            paths.add(name, is_dir=False)
             if (not valid_path(name) or name in seen or not member.isfile()
                     or not allowed(name) or name not in expected):
                 raise ValueError('Forbidden or duplicate archive member')
@@ -101,13 +144,13 @@ def validate_archive(archive, expected):
 
 def extract_git_archive(archive, destination):
     """Extract only regular files and directories, without following links."""
-    seen = set()
+    paths = PathRegistry()
     with tarfile.open(archive, 'r:') as tar:
         for member in tar:
             name = member.name.rstrip('/') if member.isdir() else member.name
-            if not valid_path(name) or name in seen or not (member.isfile() or member.isdir()):
+            if not (member.isfile() or member.isdir()):
                 raise ValueError('Unsafe Git archive member')
-            seen.add(name)
+            paths.add(name, member.isdir())
             target = destination.joinpath(*name.split('/'))
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
