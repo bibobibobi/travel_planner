@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export default function Auth({ onLoginSuccess }) {
     const [isLoginMode, setIsLoginMode] = useState(true);
@@ -7,9 +7,20 @@ export default function Auth({ onLoginSuccess }) {
     const [inviteCode, setInviteCode] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const requestRef = useRef(0);
+    const mountedRef = useRef(false);
+
+    useEffect(() => {
+        const requests = requestRef;
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; requests.current++; };
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        const request = ++requestRef.current;
+        const startingToken = localStorage.getItem('travel_token');
+        const current = () => mountedRef.current && requestRef.current === request && localStorage.getItem('travel_token') === startingToken;
         setErrorMessage('');
         setIsLoading(true);
 
@@ -27,6 +38,7 @@ export default function Auth({ onLoginSuccess }) {
             });
 
             const data = await response.json();
+            if (!current()) return;
 
             if (!response.ok) {
                 throw new Error(data.error || '發生錯誤，請稍後再試');
@@ -43,9 +55,9 @@ export default function Auth({ onLoginSuccess }) {
                 setPassword('');
             }
         } catch (error) {
-            setErrorMessage(error.message);
+            if (current()) setErrorMessage(error.message);
         } finally {
-            setIsLoading(false);
+            if (current()) setIsLoading(false);
         }
     };
 

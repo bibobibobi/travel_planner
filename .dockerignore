@@ -1,0 +1,13 @@
+**
+!Dockerfile.verify
+!requirements.txt
+!requirements-prod.txt
+!requirements-dev.txt
+!app.py
+!websocket_worker.py
+!tests/
+!tests/**
+!verify/
+!verify/**
+**/__pycache__/
+**/*.pyc

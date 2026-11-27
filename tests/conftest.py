@@ -4,7 +4,9 @@ import pytest
 
 # Set these before importing app.py so its module-level app instance never
 # connects to a developer's PostgreSQL database during a test run.
+os.environ["PYTHON_DOTENV_DISABLED"] = "1"
 os.environ["DATABASE_URL"] = "sqlite://"
+os.environ["ALLOWED_ORIGINS"] = ""
 os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-key-with-32-bytes"
 os.environ["SECRET_KEY"] = "test-flask-secret"
 os.environ["INVITE_CODE"] = "test-invite-code"

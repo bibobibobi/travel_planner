@@ -1,0 +1,4 @@
+-r requirements.txt
+gunicorn==26.0.0
+gevent==26.5.0
+gevent-websocket==0.10.1

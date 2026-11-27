@@ -1,0 +1,23 @@
+FROM --platform=linux/amd64 ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /verify
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY requirements.txt requirements-prod.txt requirements-dev.txt ./
+RUN python -m pip install -r requirements-prod.txt -r requirements-dev.txt websocket-client
+COPY app.py ./
+COPY websocket_worker.py ./
+COPY tests/ tests/
+COPY verify/ verify/
+ENV DATABASE_URL=sqlite:////tmp/travel-verify.db \
+    SOCKETIO_ASYNC_MODE=gevent \
+    ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 \
+    JWT_SECRET_KEY=verification-only-jwt-secret-32-bytes \
+    SECRET_KEY=verification-only-secret \
+    INVITE_CODE=verification-only-invite \
+    GEMINI_API_KEY=verification-only-key \
+    FXRATES_API_KEY=verification-only-key \
+    PYTHON_DOTENV_DISABLED=1
+CMD ["python", "verify/websocket_smoke.py"]
