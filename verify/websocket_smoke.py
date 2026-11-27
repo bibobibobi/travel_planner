@@ -23,8 +23,11 @@ def main():
         env=os.environ.copy(),
     )
     client = socketio.Client(reconnection=False)
+    outsider = socketio.Client(reconnection=False)
     received = threading.Event()
+    leaked = threading.Event()
     client.on("itinerary_updated", lambda _data: received.set())
+    outsider.on("itinerary_updated", lambda _data: leaked.set())
     try:
         for _ in range(100):
             if server.poll() is not None:
@@ -53,19 +56,30 @@ def main():
         response.raise_for_status()
         token = response.json()["access_token"]
         headers = {"Authorization": "Bearer " + token}
+        other_credentials = {"email": "other@example.invalid", "password": "test-password"}
+        response = requests.post(base + "/api/register", json={**other_credentials, "invite_code": "verification-only-invite"}, timeout=5)
+        response.raise_for_status()
+        response = requests.post(base + "/api/login", json=other_credentials, timeout=5)
+        response.raise_for_status()
+        other_token = response.json()["access_token"]
         response = requests.post(base + "/api/trips", headers=headers, json={"title": "test", "start_date": "2026-01-01", "end_date": "2026-01-02"}, timeout=5)
         response.raise_for_status()
         trip_id = response.json()["id"]
         client.connect(base, auth={"token": token}, transports=["websocket"], wait_timeout=5)
         assert client.transport() == "websocket"
-        client.emit("join_trip", {"trip_id": trip_id})
-        time.sleep(0.3)
+        outsider.connect(base, auth={"token": other_token}, transports=["websocket"], wait_timeout=5)
+        assert client.call("join_trip", {"trip_id": trip_id}, timeout=5) == {"ok": True, "trip_id": trip_id}
+        assert outsider.call("join_trip", {"trip_id": trip_id}, timeout=5) == {"ok": False, "error": "access_denied"}
         response = requests.post(base + "/api/items", headers=headers, json={"trip_id": trip_id, "content": "test"}, timeout=5)
         response.raise_for_status()
         if not received.wait(5):
             raise AssertionError("WebSocket client did not receive itinerary event")
+        if leaked.wait(0.5):
+            raise AssertionError("Unauthorized client received itinerary event")
         print("PASS: real websocket transport and room event")
     finally:
+        if outsider.connected:
+            outsider.disconnect()
         if client.connected:
             client.disconnect()
         server.terminate()

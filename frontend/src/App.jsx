@@ -46,6 +46,8 @@ function App() {
   // 💡 新增：用來儲存 WebSocket 連線實例的狀態
   const [socket, setSocket] = useState(null);
   const socketRef = useRef(null);
+  const subscriptionRef = useRef(null);
+  const [syncStatus, setSyncStatus] = useState('尚未連線');
 
   useEffect(() => localStorage.setItem('travelBaseCurrency', baseCurrency), [baseCurrency]);
 
@@ -58,16 +60,27 @@ function App() {
     const newSocket = io(BASE_URL || window.location.origin, {
       path: '/socket.io',
       transports: ['websocket', 'polling'],
-      auth: { token }
+      auth: { token },
+      reconnectionAttempts: 5
     });
-    const onError = () => newSocket.disconnect();
+    const onError = (error) => {
+      if (error.message === 'Connection rejected by server') {
+        newSocket.disconnect();
+        setSyncStatus('即時同步身分驗證失敗，請重新登入');
+      } else {
+        setSyncStatus('即時同步連線失敗，正在重試');
+      }
+    };
+    const onReconnectFailed = () => setSyncStatus('即時同步無法連線，請重新整理頁面');
     newSocket.on('connect_error', onError);
+    newSocket.io.on('reconnect_failed', onReconnectFailed);
     socketRef.current = newSocket;
     setSocket(newSocket);
 
     // 當元件卸載時關閉連線，避免記憶體洩漏
     return () => {
       newSocket.off('connect_error', onError);
+      newSocket.io.off('reconnect_failed', onReconnectFailed);
       newSocket.disconnect();
       if (socketRef.current === newSocket) socketRef.current = null;
     };
@@ -91,6 +104,9 @@ function App() {
   useEffect(() => {
     if (socket && currentTrip) {
       let active = true;
+      let attempt = 0;
+      const subscription = { socket, tripId: currentTrip.id };
+      subscriptionRef.current = subscription;
       const refresh = (endpoint, setData) => {
         if (!active || socketRef.current !== socket || localStorage.getItem('travel_token') !== token) return;
         fetch(`${API_BASE}/${endpoint}?trip_id=${currentTrip.id}`, {
@@ -102,9 +118,32 @@ function App() {
         });
       };
       // 告訴伺服器：我進入這個行程了，請把我加進該行程的廣播房間
-      const join = () => socket.emit('join_trip', { trip_id: currentTrip.id });
+      const join = () => {
+        if (!active || !socket.connected || socketRef.current !== socket) return;
+        const currentAttempt = ++attempt;
+        setSyncStatus('正在訂閱即時更新');
+        socket.timeout(5000).emit('join_trip', { trip_id: currentTrip.id }, (error, result) => {
+          if (!active || currentAttempt !== attempt || socketRef.current !== socket) {
+            const current = subscriptionRef.current;
+            if (!error && result?.ok && socket.connected && !(current?.socket === socket && current.tripId === currentTrip.id)) {
+              socket.emit('leave_trip', { trip_id: currentTrip.id });
+            }
+            return;
+          }
+          if (error || !result?.ok) {
+            setSyncStatus('即時更新訂閱失敗，請重新選取行程');
+            return;
+          }
+          setSyncStatus('即時更新已連線');
+          refresh('items', setItems);
+          refresh('shopping', setShoppingItems);
+          refresh('expenses', setExpenses);
+        });
+      };
+      const onDisconnect = () => { attempt++; setSyncStatus('即時同步已中斷，正在重連'); };
       if (socket.connected) join();
       socket.on('connect', join);
+      socket.on('disconnect', onDisconnect);
 
       // 註冊廣播接收器：收到更新訊號就重新拉取該分頁的最新資料
       const onItinerary = () => refresh('items', setItems);
@@ -117,8 +156,10 @@ function App() {
       // 清理函數：當退回大廳或切換行程時，離開舊房間並取消監聽
       return () => {
         active = false;
+        if (subscriptionRef.current === subscription) subscriptionRef.current = null;
         if (socket.connected) socket.emit('leave_trip', { trip_id: currentTrip.id });
         socket.off('connect', join);
+        socket.off('disconnect', onDisconnect);
         socket.off('itinerary_updated', onItinerary);
         socket.off('shopping_updated', onShopping);
         socket.off('expenses_updated', onExpenses);
@@ -183,7 +224,7 @@ function App() {
   }, [isLoggedIn])
 
   const fetchTrips = () => fetch(`${API_BASE}/trips`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setTrips(Array.isArray(data) ? data : []))
-  const selectTrip = (trip) => { setCurrentTrip(trip); setSelectedDay(1); setExpenseFilterDay(0); fetchItems(trip.id); fetchExpenses(trip.id); fetchShopping(trip.id); }
+  const selectTrip = (trip) => { setSyncStatus('等待即時同步連線'); setCurrentTrip(trip); setSelectedDay(1); setExpenseFilterDay(0); fetchItems(trip.id); fetchExpenses(trip.id); fetchShopping(trip.id); }
   const fetchItems = (tripId) => fetch(`${API_BASE}/items?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setItems(Array.isArray(data) ? data : []))
   const fetchExpenses = (tripId) => fetch(`${API_BASE}/expenses?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setExpenses(Array.isArray(data) ? data : []))
   const fetchShopping = (tripId) => fetch(`${API_BASE}/shopping?trip_id=${tripId}`, { headers: getAuthHeaders() }).then(res => res.json()).then(data => setShoppingItems(Array.isArray(data) ? data : []))
@@ -619,6 +660,7 @@ function App() {
             </div>
           </div>
 
+          <div role="status" style={{ textAlign: 'center', color: '#718096', fontSize: '0.8em', marginBottom: '8px' }}>{syncStatus}</div>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
             <button onClick={() => setActiveTab('itinerary')} style={getTabStyle('itinerary')}>行程看板</button>
             <button onClick={() => setActiveTab('shopping')} style={getTabStyle('shopping')}>購物清單</button>

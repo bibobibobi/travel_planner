@@ -17,7 +17,7 @@ from flask_jwt_extended import (
 )
 
 # ====== 💡 新增：WebSockets 即時通訊套件 ======
-from flask_socketio import SocketIO, join_room, leave_room
+from flask_socketio import SocketIO, join_room, leave_room, rooms
 from flask_sqlalchemy import SQLAlchemy
 from google.api_core.exceptions import GoogleAPIError
 
@@ -168,7 +168,7 @@ def socket_connect(auth):
             expiry = claims['exp']
         registry = app_instance.extensions['socket_auth_registry']
         with registry['lock']:
-            registry['sids'][sid] = {'user_id': user_id, 'exp': expiry}
+            registry['sids'][sid] = {'user_id': user_id, 'exp': expiry, 'room_lock': threading.RLock()}
     except Exception:  # noqa: BLE001 -- authentication must fail closed
         return False
 
@@ -180,31 +180,55 @@ def socket_disconnect(reason=None):
         registry['sids'].pop(request.sid, None)
 
 
-def socket_authenticated():
-    registry = current_app.extensions['socket_auth_registry']
-    with registry['lock']:
-        return request.sid in registry['sids']
+def socket_trip_id(data):
+    if not isinstance(data, dict):
+        return None
+    value = data.get('trip_id')
+    if isinstance(value, str):
+        if not value.isascii() or not value.isdecimal() or len(value) > 10:
+            return None
+        value = int(value)
+    if type(value) is not int or not 1 <= value <= 2147483647:
+        return None
+    return value
 
 
 @socketio.on('join_trip')
-def on_join(data):
+def on_join(data=None):
     """當前端進入某個行程分頁時觸發，加入專屬廣播房間"""
-    if not socket_authenticated() or not isinstance(data, dict):
-        return
-    trip_id = data.get('trip_id')
-    if trip_id:
-        room = f"trip_{trip_id}"
-        join_room(room)
+    registry = current_app.extensions['socket_auth_registry']
+    with registry['lock']:
+        state = registry['sids'].get(request.sid)
+    if state is None:
+        return {'ok': False, 'error': 'unauthenticated'}
+    trip_id = socket_trip_id(data)
+    if trip_id is None:
+        return {'ok': False, 'error': 'invalid_trip_id'}
+    with state['room_lock']:
+        try:
+            if not has_trip_access(trip_id, state['user_id']):
+                return {'ok': False, 'error': 'access_denied'}
+            room = f"trip_{trip_id}"
+            if room not in rooms():
+                join_room(room)
+        except Exception:  # noqa: BLE001 -- do not authorize when lookup fails
+            return {'ok': False, 'error': 'access_denied'}
+    return {'ok': True, 'trip_id': trip_id}
 
 @socketio.on('leave_trip')
-def on_leave(data):
+def on_leave(data=None):
     """當前端退回大廳時觸發，離開專屬廣播房間"""
-    if not socket_authenticated() or not isinstance(data, dict):
-        return
-    trip_id = data.get('trip_id')
-    if trip_id:
-        room = f"trip_{trip_id}"
-        leave_room(room)
+    registry = current_app.extensions['socket_auth_registry']
+    with registry['lock']:
+        state = registry['sids'].get(request.sid)
+    if state is None:
+        return {'ok': False, 'error': 'unauthenticated'}
+    trip_id = socket_trip_id(data)
+    if trip_id is None:
+        return {'ok': False, 'error': 'invalid_trip_id'}
+    with state['room_lock']:
+        leave_room(f"trip_{trip_id}")
+    return {'ok': True, 'trip_id': trip_id}
 
 # ================= API 路由 =================
 
