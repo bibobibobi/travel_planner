@@ -143,3 +143,19 @@ curl -i http://127.0.0.1:5001/api/ready
 ```
 
 未來 CD 可在程序啟動後輪詢 `/api/health`，再以 `/api/ready` 的 200 作為導流前提；503 應保留或重試。`SELECT 1` 只能確認當下資料庫可執行極小的唯讀 SQL，不能保證所有資料表、遷移狀態、權限、資料內容、外部服務或業務功能正常。
+
+## 建立部署產物
+
+安裝 Git、Node.js 和 npm 後，在專案目錄執行：
+
+```bash
+python scripts/package_release.py --ref HEAD --output-dir artifacts
+cd artifacts
+sha256sum -c travel-app-完整CommitSHA.tar.gz.sha256
+```
+
+腳本將 ref 固定解析為 Commit，使用 `git archive` 匯出該版本，在隔離目錄執行 `npm ci` 和 `npm run build`，並將建置程序的 `VITE_API_URL` 設為空字串。未提交的修改不會進入產物。輸出只含後端必要檔案、完整 SHA 的 `REVISION` 與前端 `dist/`，並在封裝前後驗證內容；已存在的同名檔案不會覆蓋。
+
+`dist/` 僅允許 HTML、JavaScript、CSS、SVG、常見圖片及字型等指定副檔名，且不允許隱藏項目或敏感目錄。加入其他靜態資源格式時可能需要更新 `scripts/package_release.py` 的允許清單。檔名及副檔名檢查無法保證檔案內容不含秘密資訊。
+
+壓縮檔及校驗檔無法同時原子發布：若發布第二個檔案失敗，程式會移除本次發布的第一個檔案；若程序或系統在兩次操作之間突然終止，仍可能留下單獨的檔案。遇到這種情況請先人工檢查並移除不完整的一組後再重試。輸出目錄須支援同一檔案系統的 hard link。此腳本只建立產物，不執行部署。
