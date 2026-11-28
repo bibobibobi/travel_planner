@@ -1,0 +1,3 @@
+# Preserve the existing status command and add one fixed no-argument receiver.
+travel-deploy ALL=(root) NOPASSWD: NOSETENV: /usr/local/sbin/travel-deploy-control status
+travel-deploy ALL=(root) NOPASSWD: NOSETENV: /usr/local/sbin/travel-receive-wrapper ""

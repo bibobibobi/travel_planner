@@ -1,0 +1,4 @@
+# Server-side Python and POSIX shell files must retain LF when transferred to Ubuntu.
+*.sh text eol=lf
+/deploy/server/* text eol=lf
+/deploy/maintenance/* text eol=lf

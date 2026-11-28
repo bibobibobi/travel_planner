@@ -1,0 +1,4 @@
+# Add to the existing backup policy; do not replace its other permissions.
+ubuntu ALL=(root) NOPASSWD: NOSETENV: /usr/local/sbin/travel-backup-guard verify-state
+ubuntu ALL=(root) NOPASSWD: NOSETENV: /usr/local/sbin/travel-backup-guard packages
+ubuntu ALL=(root) NOPASSWD: NOSETENV: /usr/local/sbin/travel-backup-deployment-archive ""

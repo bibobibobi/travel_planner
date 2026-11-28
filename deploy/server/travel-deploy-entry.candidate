@@ -1,0 +1,112 @@
+#!/bin/bash -p
+# Candidate only: preserve the installed forced command until reviewed.
+set -euo pipefail
+umask 077
+
+export PATH=/usr/bin:/bin
+export LC_ALL=C
+
+INCOMING="/opt/travel-app/incoming"
+STAGING="/opt/travel-app/staging"
+TOOLS="/opt/travel-app/tools"
+
+MAX_BYTES=10485760
+UPLOAD_TIMEOUT=120
+EXTRACT_TIMEOUT=120
+COMMAND="${SSH_ORIGINAL_COMMAND:-}"
+
+case "$COMMAND" in
+    ping)
+        echo "TRAVEL_DEPLOY_OK"
+        exit 0
+        ;;
+    status)
+        /usr/bin/sudo -n /usr/local/sbin/travel-deploy-control status
+        exit 0
+        ;;
+esac
+
+if [[ "$COMMAND" =~ ^deploy-artifact\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+    COMMIT_SHA="${BASH_REMATCH[1]}"
+    EXPECTED_SHA256="${BASH_REMATCH[2]}"
+    { printf '%s %s\n' "$COMMIT_SHA" "$EXPECTED_SHA256"; /usr/bin/cat; } |
+        /usr/bin/sudo -n /usr/local/sbin/travel-receive-wrapper
+    exit "$?"
+fi
+
+if [[ ! "$COMMAND" =~ ^(upload-artifact|stage-artifact)\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+    echo "ERROR: Command not allowed" >&2
+    exit 1
+fi
+
+ACTION="${BASH_REMATCH[1]}"
+COMMIT_SHA="${BASH_REMATCH[2]}"
+EXPECTED_SHA256="${BASH_REMATCH[3]}"
+
+exec 9>>"$INCOMING/.upload.lock"
+if ! /usr/bin/flock -n 9; then
+    echo "ERROR: Upload already in progress" >&2
+    exit 1
+fi
+
+TMP_FILE=""
+cleanup() {
+    if [[ -n "$TMP_FILE" ]]; then
+        /usr/bin/rm -f -- "$TMP_FILE"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+TMP_FILE=$(/usr/bin/mktemp "$INCOMING/.artifact.XXXXXX")
+
+if ! /usr/bin/timeout -k 5s "${UPLOAD_TIMEOUT}s" \
+    /usr/bin/head -c "$((MAX_BYTES + 1))" > "$TMP_FILE"; then
+    echo "ERROR: Upload failed or timed out" >&2
+    exit 1
+fi
+SIZE=$(/usr/bin/stat -c %s "$TMP_FILE")
+if (( SIZE == 0 || SIZE > MAX_BYTES )); then
+    echo "ERROR: Invalid file size" >&2
+    exit 1
+fi
+ACTUAL_SHA256=$(/usr/bin/sha256sum "$TMP_FILE")
+ACTUAL_SHA256="${ACTUAL_SHA256%% *}"
+if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+    echo "ERROR: SHA256 mismatch" >&2
+    exit 1
+fi
+
+case "$ACTION" in
+    upload-artifact)
+        /usr/bin/mv -T -- "$TMP_FILE" "$INCOMING/artifact.tar.gz"
+        echo "UPLOAD_OK"
+        echo "REVISION=$COMMIT_SHA"
+        echo "SHA256=$ACTUAL_SHA256"
+        echo "SIZE=$SIZE"
+        ;;
+    stage-artifact)
+        if ! /usr/bin/timeout -k 5s "${EXTRACT_TIMEOUT}s" \
+            /usr/bin/prlimit \
+                --as=268435456:268435456 \
+                --cpu=60:60 \
+                --fsize=67108864:67108864 \
+                --nofile=128:128 \
+                --core=0:0 \
+                -- \
+            /usr/bin/python3 -E -s -B \
+                "$TOOLS/extract_artifact.py" \
+                --artifact "$TMP_FILE" \
+                --revision "$COMMIT_SHA" \
+                --sha256 "$EXPECTED_SHA256" \
+                --staging-dir "$STAGING" \
+                </dev/null; then
+            echo "ERROR: Staging failed" >&2
+            exit 1
+        fi
+        echo "STAGE_OK"
+        echo "REVISION=$COMMIT_SHA"
+        echo "SHA256=$ACTUAL_SHA256"
+        echo "SIZE=$SIZE"
+        ;;
+esac

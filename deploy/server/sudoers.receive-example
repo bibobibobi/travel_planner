@@ -1,0 +1,3 @@
+# Candidate addition only; preserve the existing status rule.
+# No sudo arguments, and no user-controlled environment.
+travel-deploy ALL=(root) NOPASSWD: NOSETENV: /usr/local/sbin/travel-receive-wrapper ""

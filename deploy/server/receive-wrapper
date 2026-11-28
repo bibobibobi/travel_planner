@@ -1,0 +1,10 @@
+#!/bin/bash -p
+# Candidate sudo entry: install only after local security review.
+set -euo pipefail
+export PATH=/usr/bin:/bin LC_ALL=C
+umask 077
+if (( $# != 0 )); then
+    echo 'ERROR: Invalid arguments' >&2
+    exit 1
+fi
+exec /usr/bin/python3 -E -s -B /usr/local/lib/travel-deploy/deploy_pipeline.py

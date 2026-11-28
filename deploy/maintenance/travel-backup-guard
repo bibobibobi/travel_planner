@@ -1,0 +1,7 @@
+#!/bin/bash -p
+set -euo pipefail
+export PATH=/usr/bin:/bin LC_ALL=C
+if (( $# != 1 )) || [[ "$1" != verify-state && "$1" != packages ]]; then
+    echo 'ERROR: invalid backup guard arguments' >&2; exit 1
+fi
+exec /usr/bin/python3 -E -s -B /usr/local/lib/travel-deploy/travel_backup_guard.py "$1"
