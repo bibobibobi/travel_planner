@@ -191,3 +191,8 @@ python scripts/extract_artifact.py --artifact /opt/travel-app/incoming/artifact.
 staging 必須預先存在，路徑各層不得是 symbolic link 或 reparse point；Linux 上 staging 必須由有效 UID 擁有，且不允許 group 或 other 存取（正式部署預期 700），不符合時拒絕，不自動更改權限或擁有者。父目錄、執行帳號與同 UID 的其他程序均須受信任：路徑檢查無法消除所有父目錄替換競態，也不防禦任意同 UID 程序。Linux 禁止 root 執行；Windows 依賴受信任的 ACL，工具不修改 ACL。此工具以 Validator 的私有快照完成驗證與解壓縮，兩次使用相同解析及限制，並逐檔核對內容摘要。它在 staging 建立獨立暫存目錄，不採用封存的權限或擁有者，Linux 目錄為 700、檔案為 600；Windows 權限由 ACL 決定，chmod 並不等同 ACL。暫存目錄不是完整安全沙箱。
 
 驗證和寫入完成後，Linux 使用 `renameat2(RENAME_NOREPLACE)` 原子發布為完整 SHA 目錄，Windows 使用不覆寫目標的 rename；不支援的平台或 Linux 核心／檔案系統會安全失敗。並行執行同一版本時只有一個可發布，不會覆寫現有版本。一般失敗會清理本次暫存目錄，但 SIGKILL 或系統突然中止可能留下 `.extract-` 目錄，需由管理者檢查；不自動清理其他版本。此工具不安裝套件、不執行產物或啟動服務。
+
+## 自動化部署
+
+專案透過 GitHub Actions 執行 CI/CD，通過測試並合併至 main 後，
+自動建置部署產物並部署至 Oracle Cloud，包含健康檢查與失敗回滾機制。
