@@ -1,0 +1,20 @@
+#!/bin/bash
+# Exact existing status-only root control interface.
+set -euo pipefail
+if [[ $# -ne 1 ]]; then
+    echo "ERROR: Invalid arguments" >&2
+    exit 1
+fi
+case "$1" in
+    status)
+        /usr/bin/systemctl show travel.service \
+            -p ActiveState \
+            -p SubState \
+            -p User \
+            -p Group
+        ;;
+    *)
+        echo "ERROR: Operation not allowed" >&2
+        exit 1
+        ;;
+esac

@@ -1,0 +1,22 @@
+#!/bin/sh
+# root:root 0755, executed through runuser as travel-build; no shared access.
+set -eu
+action=${1:?}
+base=/opt/travel-app
+umask 077
+case "$action" in
+  prepare)
+    rev=${2:?}; digest=${3:?}
+    /usr/bin/python3 /usr/local/lib/travel-deploy/extract_artifact.py --artifact "$base/build-inputs/$rev.tar.gz" --revision "$rev" --sha256 "$digest" --staging-dir "$base/prepare"
+    work="$base/prepare/$rev"
+    ln -s /opt/travel-app/shared/.env "$work/.env"
+    ln -s /opt/travel-app/shared/uploads "$work/uploads"
+    ;;
+  install-venv)
+    work=${2:?}
+    /usr/bin/python3 -m venv "$work/venv"
+    "$work/venv/bin/pip" install --disable-pip-version-check --requirement "$work/requirements-prod.txt"
+    "$work/venv/bin/pip" check
+    ;;
+  *) exit 64;;
+esac

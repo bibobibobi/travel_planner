@@ -1,0 +1,7 @@
+#!/bin/sh
+# root:root 0755. Existing ping/status/upload/stage handlers stay in the real
+# wrapper; add only the fixed root controller invocations below.
+case "${1-}" in
+  deploy-artifact|rollback|cleanup|status) exec /usr/bin/python3 /usr/local/lib/travel-deploy/travel_deploy_control.py "$@";;
+  *) exit 64;;
+esac

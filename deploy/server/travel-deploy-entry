@@ -1,0 +1,13 @@
+#!/bin/sh
+# root:root 0755.  Forced command for travel-deploy's SSH key.
+set -eu
+echo 'Candidate entry disabled: existing server entry must be preserved' >&2
+exit 1
+set -- $SSH_ORIGINAL_COMMAND
+[ "$#" -ge 1 ] || exit 64
+case "$1" in ping|status) [ "$#" = 1 ] || exit 64; exec /usr/local/sbin/travel-deploy-control "$1";;
+  upload-artifact|stage-artifact) exec /usr/local/sbin/travel-deploy-control "$@";;
+  deploy-artifact) [ "$#" = 3 ] || exit 64; exec sudo -n /usr/local/sbin/travel-deploy-control "$@";;
+  rollback) [ "$#" = 2 ] || exit 64; exec sudo -n /usr/local/sbin/travel-deploy-control "$@";;
+  cleanup) [ "$#" = 2 ] && [ "$2" = --dry-run ] || exit 64; exec sudo -n /usr/local/sbin/travel-deploy-control "$@";;
+  *) exit 64;; esac

@@ -1,0 +1,9 @@
+#!/bin/bash -p
+set -euo pipefail
+export PATH=/usr/bin:/bin LC_ALL=C
+if (( $# != 0 )); then echo 'ERROR: invalid archive arguments' >&2; exit 1; fi
+exec /usr/bin/tar -czf - -C / \
+    usr/local/lib/travel-deploy etc/travel-deploy opt/travel-app/deployment-state \
+    usr/local/sbin/travel-receive-wrapper \
+    usr/local/sbin/travel-backup-guard usr/local/sbin/travel-backup-deployment-archive \
+    etc/sudoers.d/server-backup-travel

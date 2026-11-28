@@ -1,0 +1,4 @@
+# Install as /etc/sudoers.d/travel-deploy (root:root 0440; verify with visudo -cf).
+# Do not allow wildcards: the SSH forced command has already validated arity.
+Cmnd_Alias TRAVEL_LIFECYCLE = /usr/local/sbin/travel-deploy-control deploy-artifact [0-9a-f][0-9a-f]*, /usr/local/sbin/travel-deploy-control rollback [0-9a-f][0-9a-f]*, /usr/local/sbin/travel-deploy-control cleanup --dry-run
+travel-deploy ALL=(root) NOPASSWD: TRAVEL_LIFECYCLE
