@@ -41,10 +41,49 @@ class QuiescentFailure(BuildError):
 
 
 def disk_bytes(path):
-    """Use du without following links; this is a budget check, not a quota."""
-    proc = subprocess.run(['/usr/bin/du', '-sx', '-B1', '--', str(path)], check=True,
-                          capture_output=True, timeout=30)
-    return int(proc.stdout.split(None, 1)[0])
+    """Measure disk usage with bounded retries for transient file removal."""
+    command = ['/usr/bin/du', '-sx', '-B1', '--', str(path)]
+
+    for attempt in range(3):
+        proc = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, 'LC_ALL': 'C'},
+        )
+
+        if proc.returncode == 0:
+            return int(proc.stdout.split(None, 1)[0])
+
+        errors = [
+            line for line in proc.stderr.splitlines()
+            if line.strip()
+        ]
+
+        transient = bool(errors) and all(
+            'cannot access' in line
+            and line.endswith('No such file or directory')
+            for line in errors
+        )
+
+        if transient and path.exists() and attempt < 2:
+            print(
+                f'[capacity] transient scan failure; '
+                f'retry {attempt + 1}/2: {path}',
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(0.2)
+            continue
+
+        raise BuildError(
+            f'disk usage check failed for {path}: '
+            f'{proc.stderr.strip() or proc.returncode}'
+        )
+
+    raise BuildError(f'disk usage check failed for {path}')
 
 
 def check_capacity(*paths, copy_reserve=0):
